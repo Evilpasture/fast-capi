@@ -5,6 +5,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+  #ifndef _NULLPTR_T
+    #define _NULLPTR_T
+    typedef typeof(nullptr) nullptr_t;
+  #endif
+#endif
+
 #if defined(__clang__)
   #define FB_LIKELY   [[clang::likely]]
   #define FB_UNLIKELY [[clang::unlikely]]
