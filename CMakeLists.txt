@@ -17,13 +17,7 @@ add_library(fast_capi_core STATIC
     src/fast_capi/fast_parse.c
 )
 
-if(MSVC OR (CMAKE_C_COMPILER_ID STREQUAL "Clang" AND CMAKE_C_SIMULATE_ID STREQUAL "MSVC"))
-    # clang-cl uses MSVC-style flags. /std:c23 is the target.
-    target_compile_options(fast_capi_core PRIVATE /std:c23)
-else()
-    # For standard GCC/Clang on Linux/macOS
-    target_compile_options(fast_capi_core PRIVATE -std=c23)
-endif()
+target_compile_features(fast_capi_core PRIVATE c_std_23)
 
 # 4. Handle Include Paths for Submodule Use
 # PUBLIC ensures that when a parent project links to fast_capi_core,
