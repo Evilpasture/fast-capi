@@ -6,21 +6,21 @@
 #include <stdint.h>
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
-  #ifndef _NULLPTR_T
-    #define _NULLPTR_T
-    typedef typeof(nullptr) nullptr_t;
-  #endif
+#    ifndef _NULLPTR_T
+#        define _NULLPTR_T
+typedef typeof(nullptr) nullptr_t;
+#    endif
 #endif
 
 #if defined(__clang__)
-  #define FB_LIKELY   [[clang::likely]]
-  #define FB_UNLIKELY [[clang::unlikely]]
+#    define FB_LIKELY [[clang::likely]]
+#    define FB_UNLIKELY [[clang::unlikely]]
 #elif defined(__GNUC__)
-  #define FB_LIKELY   [[gnu::likely]]
-  #define FB_UNLIKELY [[gnu::unlikely]]
+#    define FB_LIKELY [[gnu::likely]]
+#    define FB_UNLIKELY [[gnu::unlikely]]
 #else
-  #define FB_LIKELY
-  #define FB_UNLIKELY
+#    define FB_LIKELY
+#    define FB_UNLIKELY
 #endif
 
 /**
@@ -48,15 +48,9 @@
 [[nodiscard]] static inline PyObject *fb_from_float(float v) {
     return PyFloat_FromDouble((double)v);
 }
-[[nodiscard]] static inline PyObject *fb_from_double(double v) {
-    return PyFloat_FromDouble(v);
-}
-[[nodiscard]] static inline PyObject *fb_from_int(int v) {
-    return PyLong_FromLong((long)v);
-}
-[[nodiscard]] static inline PyObject *fb_from_long(long v) {
-    return PyLong_FromLong(v);
-}
+[[nodiscard]] static inline PyObject *fb_from_double(double v) { return PyFloat_FromDouble(v); }
+[[nodiscard]] static inline PyObject *fb_from_int(int v) { return PyLong_FromLong((long)v); }
+[[nodiscard]] static inline PyObject *fb_from_long(long v) { return PyLong_FromLong(v); }
 [[nodiscard]] static inline PyObject *fb_from_longlong(long long v) {
     return PyLong_FromLongLong(v);
 }
@@ -66,9 +60,7 @@
 [[nodiscard]] static inline PyObject *fb_from_u64(uint64_t v) {
     return PyLong_FromUnsignedLongLong((unsigned long long)v);
 }
-[[nodiscard]] static inline PyObject *fb_from_str(const char *v) {
-    return PyUnicode_FromString(v);
-}
+[[nodiscard]] static inline PyObject *fb_from_str(const char *v) { return PyUnicode_FromString(v); }
 [[nodiscard]] static inline PyObject *fb_from_bool(bool v) {
     PyObject *res = (int)v ? Py_True : Py_False;
     Py_INCREF(res); // Return a new reference
@@ -78,9 +70,7 @@
     Py_XINCREF(v);
     return v;
 }
-[[nodiscard]] static inline PyObject *fb_from_none([[maybe_unused]] nullptr_t v) {
-    Py_RETURN_NONE;
-}
+[[nodiscard]] static inline PyObject *fb_from_none([[maybe_unused]] nullptr_t v) { Py_RETURN_NONE; }
 
 /* --- 2. THE C23 COMPILE-TIME ROUTER --- */
 
@@ -106,14 +96,20 @@ extern PyObject *FB_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD(void);
 /* --- 3. THE CONTAINER PACKERS --- */
 
 [[nodiscard]] static inline PyObject *fb_pack_tuple(size_t n, PyObject **arr) {
-    if (n == 0) return PyTuple_New(0);
+    if (n == 0) {
+        return PyTuple_New(0);
+    }
 
     for (size_t i = 0; i < n; i++) {
-        if (!arr[i]) FB_UNLIKELY goto error;
+        if (!arr[i]) {
+            FB_UNLIKELY goto error;
+        }
     }
 
     PyObject *t = PyTuple_New((Py_ssize_t)n);
-    if (!t) FB_UNLIKELY goto error;
+    if (!t) {
+        FB_UNLIKELY goto error;
+    }
 
     for (size_t i = 0; i < n; i++) {
         PyTuple_SET_ITEM(t, i, arr[i]); // Steals reference
@@ -121,19 +117,27 @@ extern PyObject *FB_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD(void);
     return t;
 
 error:
-    for (size_t i = 0; i < n; i++) Py_XDECREF(arr[i]);
+    for (size_t i = 0; i < n; i++) {
+        Py_XDECREF(arr[i]);
+    }
     return nullptr;
 }
 
 [[nodiscard]] static inline PyObject *fb_pack_list(size_t n, PyObject **arr) {
-    if (n == 0) return PyList_New(0);
+    if (n == 0) {
+        return PyList_New(0);
+    }
 
     for (size_t i = 0; i < n; i++) {
-        if (!arr[i]) FB_UNLIKELY goto error;
+        if (!arr[i]) {
+            FB_UNLIKELY goto error;
+        }
     }
 
     PyObject *l = PyList_New((Py_ssize_t)n);
-    if (!l) FB_UNLIKELY goto error;
+    if (!l) {
+        FB_UNLIKELY goto error;
+    }
 
     for (size_t i = 0; i < n; i++) {
         PyList_SET_ITEM(l, i, arr[i]); // Steals reference
@@ -141,28 +145,39 @@ error:
     return l;
 
 error:
-    for (size_t i = 0; i < n; i++) Py_XDECREF(arr[i]);
+    for (size_t i = 0; i < n; i++) {
+        Py_XDECREF(arr[i]);
+    }
     return nullptr;
 }
 
 [[nodiscard]] static inline PyObject *fb_pack_dict(size_t n, PyObject **arr) {
-    if (n == 0) return PyDict_New();
+    if (n == 0) {
+        return PyDict_New();
+    }
 
-    if (n % 2 != 0) FB_UNLIKELY goto error; // Must be key-value pairs
+    if (n % 2 != 0) {
+        FB_UNLIKELY goto error; // Must be key-value pairs
+    }
 
     for (size_t i = 0; i < n; i++) {
-        if (!arr[i]) FB_UNLIKELY goto error;
+        if (!arr[i]) {
+            FB_UNLIKELY goto error;
+        }
     }
 
     PyObject *d = PyDict_New();
-    if (!d) FB_UNLIKELY goto error;
+    if (!d) {
+        FB_UNLIKELY goto error;
+    }
 
     for (size_t i = 0; i < n; i += 2) {
         // SetItem INCREFs both items internally
-        if (PyDict_SetItem(d, arr[i], arr[i + 1]) < 0) FB_UNLIKELY {
-            Py_DECREF(d);
-            goto error;
-        }
+        if (PyDict_SetItem(d, arr[i], arr[i + 1]) < 0)
+            FB_UNLIKELY {
+                Py_DECREF(d);
+                goto error;
+            }
     }
 
     // Cleanup local references
@@ -172,7 +187,9 @@ error:
     return d;
 
 error:
-    for (size_t i = 0; i < n; i++) Py_XDECREF(arr[i]);
+    for (size_t i = 0; i < n; i++) {
+        Py_XDECREF(arr[i]);
+    }
     return nullptr;
 }
 
@@ -213,7 +230,7 @@ error:
 
 /**
  * FastKey(parser_ptr, index)
- * Fetches an interned PyObject* string from a parser. 
+ * Fetches an interned PyObject* string from a parser.
  * Use this for FastBuild_Dict keys to avoid string creation.
  */
 #define FastKey(parser_ptr, idx) ((parser_ptr)->specs[(idx)].interned)

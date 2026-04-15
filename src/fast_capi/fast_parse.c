@@ -129,13 +129,13 @@ fp_parse_legacy(PyObject *args, PyObject *kwargs, PyObject *unused,
 
     if (args) {
         Py_ssize_t nargs = PyTuple_GET_SIZE(args);
-        if (nargs > (Py_ssize_t)count) FP_UNLIKELY {
+        if (FP_UNLIKELY(nargs > (Py_ssize_t)count)) {
             return fp_report_too_many(fp, nargs);
         }
 
         for (Py_ssize_t i = 0; i < nargs; ++i) {
             provided_mask |= (1ULL << i);
-            if (!specs[i].convert(PyTuple_GET_ITEM(args, i), targets[i])) FP_UNLIKELY {
+            if (FP_UNLIKELY(!specs[i].convert(PyTuple_GET_ITEM(args, i), targets[i]))) {
                 return false;
             }
         }
@@ -148,11 +148,11 @@ fp_parse_legacy(PyObject *args, PyObject *kwargs, PyObject *unused,
         while (PyDict_Next(kwargs, &pos, &key, &val)) {
             size_t idx = FP_EMPTY_SLOT;
 
-            if (fp->lookup_table) FP_LIKELY {
+            if (FP_LIKELY(fp->lookup_table)) {
                 size_t h = fp_hash_ptr(key, fp->table_mask);
                 while (fp->lookup_table[h] != FP_EMPTY_SLOT) {
                     size_t candidate = fp->lookup_table[h];
-                    if (specs[candidate].interned == key) FP_LIKELY {
+                    if (FP_LIKELY(specs[candidate].interned == key)) {
                         idx = candidate;
                         break;
                     }
@@ -160,7 +160,7 @@ fp_parse_legacy(PyObject *args, PyObject *kwargs, PyObject *unused,
                 }
             }
 
-            if (idx == FP_EMPTY_SLOT) FP_UNLIKELY {
+            if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
                 for (size_t i = 0; i < count; ++i) {
                     if (specs[i].interned == key ||
                         PyUnicode_Compare(key, specs[i].interned) == 0) {
@@ -170,23 +170,23 @@ fp_parse_legacy(PyObject *args, PyObject *kwargs, PyObject *unused,
                 }
             }
 
-            if (idx == FP_EMPTY_SLOT) FP_UNLIKELY {
+            if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
                 PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
                 return false;
             }
 
-            if (provided_mask & (1ULL << idx)) FP_UNLIKELY {
+            if (FP_UNLIKELY(provided_mask & (1ULL << idx))) {
                 return fp_report_multiple(fp, idx);
             }
 
             provided_mask |= (1ULL << idx);
-            if (!specs[idx].convert(val, targets[idx])) FP_UNLIKELY {
+            if (FP_UNLIKELY(!specs[idx].convert(val, targets[idx]))) {
                 return false;
             }
         }
     }
 
-    if ((provided_mask & fp->required_mask) != fp->required_mask) FP_UNLIKELY {
+    if (FP_UNLIKELY((provided_mask & fp->required_mask) != fp->required_mask)) {
         return fp_report_missing(fp, provided_mask);
     }
 
