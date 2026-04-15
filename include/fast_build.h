@@ -246,3 +246,4 @@ error:
     fb_pack_dict(FB_NARGS(__VA_ARGS__), FB_NARGS(__VA_ARGS__)                                      \
                                             ? (PyObject *[]){__VA_OPT__(FB_MAP(__VA_ARGS__))}      \
                                             : nullptr)
+                                            
