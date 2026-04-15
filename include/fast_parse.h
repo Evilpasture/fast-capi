@@ -196,6 +196,19 @@ struct FastParser {
     return true;
 }
 
+[[nodiscard]] static inline bool fp_conv_str(PyObject *o, void *t) {
+    if (FP_UNLIKELY(!PyUnicode_Check(o))) {
+        PyErr_Format(PyExc_TypeError, "expected str, got %s", Py_TYPE(o)->tp_name);
+        return false;
+    }
+    const char *s = PyUnicode_AsUTF8(o);
+    if (FP_UNLIKELY(s == nullptr)) {
+        return false;
+    }
+    *(const char **)t = s;
+    return true;
+}
+
 // Allow host projects to inject custom types
 #ifndef FP_CUSTOM_CONVERTERS
 #    define FP_CUSTOM_CONVERTERS /* empty */
@@ -211,6 +224,7 @@ extern void ERROR_FastParse_Unsupported_Type(void);
         uint32_t: fp_conv_u32,                                                                     \
         uint64_t: fp_conv_u64,                                                                     \
         bool: fp_conv_bool,                                                                        \
+        const char *: fp_conv_str,                                                                  \
         PyObject *: fp_conv_pyobj FP_CUSTOM_CONVERTERS, /* INJECTION POINT */                       \
         default: ERROR_FastParse_Unsupported_Type                                                  \
     )
