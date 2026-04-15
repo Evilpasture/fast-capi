@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* --- 0. CONFIGURATION & COMPILER COMPATIBILITY --- */
+
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
 #    ifndef _NULLPTR_T
 #        define _NULLPTR_T
@@ -12,69 +14,69 @@ typedef typeof(nullptr) nullptr_t;
 #    endif
 #endif
 
-#if defined(__clang__)
-#    define FB_LIKELY [[clang::likely]]
-#    define FB_UNLIKELY [[clang::unlikely]]
-#elif defined(__GNUC__)
-#    define FB_LIKELY [[gnu::likely]]
-#    define FB_UNLIKELY [[gnu::unlikely]]
-#else
-#    define FB_LIKELY
-#    define FB_UNLIKELY
+#ifndef FB_LIKELY
+#    if defined(__GNUC__) || defined(__clang__)
+#        define FB_LIKELY(x) __builtin_expect(!!(x), 1)
+#        define FB_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#    else
+#        define FB_LIKELY(x) (x)
+#        define FB_UNLIKELY(x) (x)
+#    endif
 #endif
 
-/**
- * ============================================================================
- * FAST BUILD ENGINE (C23 EDITION)
- * ============================================================================
- * Replaces Py_BuildValue. Uses _Generic and Macro Mapping to completely
- * eliminate format-string parsing. Builds Tuples, Lists, and Dicts at
- * register-speed with zero memory leaks.
- *
- * Usage Examples:
- *    FastBuild_Value(x)               -> Py_BuildValue("i", x)
- *    FastBuild_Tuple(x, y, z)         -> Py_BuildValue("(fff)", x, y, z)
- *    FastBuild_List(x, y, z)          -> Py_BuildValue("[fff]", x, y, z)
- *    FastBuild_Dict("k", x, "v", y)   -> Py_BuildValue("{s:i, s:i}", "k", x, "v", y)
- *
- * O(1) Dictionary Keys:
- *    Use FastKey() to fetch pre-interned strings from your FastParsers!
- *    FastBuild_Dict(FastKey(&Parser, IDX_X), x)
- * ============================================================================
- */
+#ifndef FB_NODISCARD
+#    define FB_NODISCARD [[nodiscard]]
+#endif
+
+#ifndef FB_FORCE_INLINE
+#    define FB_FORCE_INLINE inline
+#endif
 
 /* --- 1. TYPE CONSTRUCTORS (Inlined) --- */
 
-[[nodiscard]] static inline PyObject *fb_from_float(float v) {
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_float(float v) {
     return PyFloat_FromDouble((double)v);
 }
-[[nodiscard]] static inline PyObject *fb_from_double(double v) { return PyFloat_FromDouble(v); }
-[[nodiscard]] static inline PyObject *fb_from_int(int v) { return PyLong_FromLong((long)v); }
-[[nodiscard]] static inline PyObject *fb_from_long(long v) { return PyLong_FromLong(v); }
-[[nodiscard]] static inline PyObject *fb_from_longlong(long long v) {
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_double(double v) {
+    return PyFloat_FromDouble(v);
+}
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_int(int v) {
+    return PyLong_FromLong((long)v);
+}
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_long(long v) { return PyLong_FromLong(v); }
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_longlong(long long v) {
     return PyLong_FromLongLong(v);
 }
-[[nodiscard]] static inline PyObject *fb_from_u32(uint32_t v) {
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_u32(uint32_t v) {
     return PyLong_FromUnsignedLong((unsigned long)v);
 }
-[[nodiscard]] static inline PyObject *fb_from_u64(uint64_t v) {
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_u64(uint64_t v) {
     return PyLong_FromUnsignedLongLong((unsigned long long)v);
 }
-[[nodiscard]] static inline PyObject *fb_from_str(const char *v) { return PyUnicode_FromString(v); }
-[[nodiscard]] static inline PyObject *fb_from_bool(bool v) {
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_str(const char *v) {
+    return PyUnicode_FromString(v);
+}
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_bool(bool v) {
     PyObject *res = (int)v ? Py_True : Py_False;
-    Py_INCREF(res); // Return a new reference
+    Py_INCREF(res);
     return res;
 }
-[[nodiscard]] static inline PyObject *fb_incref(PyObject *v) {
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_incref(PyObject *v) {
     Py_XINCREF(v);
     return v;
 }
-[[nodiscard]] static inline PyObject *fb_from_none([[maybe_unused]] nullptr_t v) { Py_RETURN_NONE; }
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_none([[maybe_unused]] nullptr_t v) {
+    Py_RETURN_NONE;
+}
 
 /* --- 2. THE C23 COMPILE-TIME ROUTER --- */
 
 extern PyObject *FB_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD(void);
+
+// Allow host projects to inject custom builders
+#ifndef FB_CUSTOM_CONVERTERS
+#    define FB_CUSTOM_CONVERTERS /* empty */
+#endif
 
 #define FB_VAL(x)                                                                                  \
     _Generic((x),                                                                                  \
@@ -90,25 +92,25 @@ extern PyObject *FB_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD(void);
         char *: fb_from_str,                                                                       \
         const char *: fb_from_str,                                                                 \
         nullptr_t: fb_from_none,                                                                   \
-        PyObject *: fb_incref,                                                                     \
+        PyObject *: fb_incref FB_CUSTOM_CONVERTERS,                                                \
         default: FB_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD)(x)
 
 /* --- 3. THE CONTAINER PACKERS --- */
 
-[[nodiscard]] static inline PyObject *fb_pack_tuple(size_t n, PyObject **arr) {
-    if (n == 0) {
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_pack_tuple(size_t n, PyObject **arr) {
+    if (FB_UNLIKELY(n == 0)) {
         return PyTuple_New(0);
     }
 
     for (size_t i = 0; i < n; i++) {
-        if (!arr[i]) {
-            FB_UNLIKELY goto error;
+        if (FB_UNLIKELY(!arr[i])) {
+            goto error;
         }
     }
 
     PyObject *t = PyTuple_New((Py_ssize_t)n);
-    if (!t) {
-        FB_UNLIKELY goto error;
+    if (FB_UNLIKELY(!t)) {
+        goto error;
     }
 
     for (size_t i = 0; i < n; i++) {
@@ -123,20 +125,20 @@ error:
     return nullptr;
 }
 
-[[nodiscard]] static inline PyObject *fb_pack_list(size_t n, PyObject **arr) {
-    if (n == 0) {
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_pack_list(size_t n, PyObject **arr) {
+    if (FB_UNLIKELY(n == 0)) {
         return PyList_New(0);
     }
 
     for (size_t i = 0; i < n; i++) {
-        if (!arr[i]) {
-            FB_UNLIKELY goto error;
+        if (FB_UNLIKELY(!arr[i])) {
+            goto error;
         }
     }
 
     PyObject *l = PyList_New((Py_ssize_t)n);
-    if (!l) {
-        FB_UNLIKELY goto error;
+    if (FB_UNLIKELY(!l)) {
+        goto error;
     }
 
     for (size_t i = 0; i < n; i++) {
@@ -151,36 +153,34 @@ error:
     return nullptr;
 }
 
-[[nodiscard]] static inline PyObject *fb_pack_dict(size_t n, PyObject **arr) {
-    if (n == 0) {
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_pack_dict(size_t n, PyObject **arr) {
+    if (FB_UNLIKELY(n == 0)) {
         return PyDict_New();
     }
 
-    if (n % 2 != 0) {
-        FB_UNLIKELY goto error; // Must be key-value pairs
+    // Must be key-value pairs
+    if (FB_UNLIKELY(n % 2 != 0)) {
+        goto error;
     }
 
     for (size_t i = 0; i < n; i++) {
-        if (!arr[i]) {
-            FB_UNLIKELY goto error;
+        if (FB_UNLIKELY(!arr[i])) {
+            goto error;
         }
     }
 
     PyObject *d = PyDict_New();
-    if (!d) {
-        FB_UNLIKELY goto error;
+    if (FB_UNLIKELY(!d)) {
+        goto error;
     }
 
     for (size_t i = 0; i < n; i += 2) {
-        // SetItem INCREFs both items internally
-        if (PyDict_SetItem(d, arr[i], arr[i + 1]) < 0)
-            FB_UNLIKELY {
-                Py_DECREF(d);
-                goto error;
-            }
+        if (FB_UNLIKELY(PyDict_SetItem(d, arr[i], arr[i + 1]) < 0)) {
+            Py_DECREF(d);
+            goto error;
+        }
     }
 
-    // Cleanup local references
     for (size_t i = 0; i < n; i++) {
         Py_DECREF(arr[i]);
     }
@@ -228,29 +228,20 @@ error:
 
 /* --- 5. THE PUBLIC API --- */
 
-/**
- * FastKey(parser_ptr, index)
- * Fetches an interned PyObject* string from a parser.
- * Use this for FastBuild_Dict keys to avoid string creation.
- */
 #define FastKey(parser_ptr, idx) ((parser_ptr)->specs[(idx)].interned)
 
-/** Returns a single Python primitive. */
 #define FastBuild_Value(x) FB_VAL(x)
 
-/** Builds a Python Tuple from C variables. */
 #define FastBuild_Tuple(...)                                                                       \
     fb_pack_tuple(FB_NARGS(__VA_ARGS__), FB_NARGS(__VA_ARGS__)                                     \
                                              ? (PyObject *[]){__VA_OPT__(FB_MAP(__VA_ARGS__))}     \
                                              : nullptr)
 
-/** Builds a Python List from C variables. */
 #define FastBuild_List(...)                                                                        \
     fb_pack_list(FB_NARGS(__VA_ARGS__), FB_NARGS(__VA_ARGS__)                                      \
                                             ? (PyObject *[]){__VA_OPT__(FB_MAP(__VA_ARGS__))}      \
                                             : nullptr)
 
-/** Builds a Python Dictionary. Must be passed in key-value pairs. */
 #define FastBuild_Dict(...)                                                                        \
     fb_pack_dict(FB_NARGS(__VA_ARGS__), FB_NARGS(__VA_ARGS__)                                      \
                                             ? (PyObject *[]){__VA_OPT__(FB_MAP(__VA_ARGS__))}      \
