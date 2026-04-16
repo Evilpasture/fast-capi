@@ -6,17 +6,17 @@
 #include <stdint.h>
 
 #if defined(__GNUC__) || defined(__clang__)
-#    define FP_LIKELY(x) __builtin_expect(!!(x), 1)
-#    define FP_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define FP_LIKELY(x) __builtin_expect(!!(x), 1)
+#define FP_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #else
-#    define FP_LIKELY(x) (x)
-#    define FP_UNLIKELY(x) (x)
+#define FP_LIKELY(x) (x)
+#define FP_UNLIKELY(x) (x)
 #endif
 
 #if defined(__cplusplus)
-#    define FP_RESTRICT __restrict
+#define FP_RESTRICT __restrict
 #else
-#    define FP_RESTRICT restrict
+#define FP_RESTRICT restrict
 #endif
 
 /**
@@ -211,7 +211,7 @@ struct FastParser {
 
 // Allow host projects to inject custom types
 #ifndef FP_CUSTOM_CONVERTERS
-#    define FP_CUSTOM_CONVERTERS /* empty */
+#define FP_CUSTOM_CONVERTERS /* empty */
 #endif
 
 extern void ERROR_FastParse_Unsupported_Type(void);
@@ -224,10 +224,9 @@ extern void ERROR_FastParse_Unsupported_Type(void);
         uint32_t: fp_conv_u32,                                                                     \
         uint64_t: fp_conv_u64,                                                                     \
         bool: fp_conv_bool,                                                                        \
-        const char *: fp_conv_str,                                                                  \
-        PyObject *: fp_conv_pyobj FP_CUSTOM_CONVERTERS, /* INJECTION POINT */                       \
-        default: ERROR_FastParse_Unsupported_Type                                                  \
-    )
+        const char *: fp_conv_str,                                                                 \
+        PyObject *: fp_conv_pyobj FP_CUSTOM_CONVERTERS, /* INJECTION POINT */                      \
+        default: ERROR_FastParse_Unsupported_Type)
 
 #define FP_ARG(name_str, var)                                                                      \
     {.name = (name_str), .convert = FP_GET_CONVERTER((typeof_unqual(var)){0}), .required = false}
@@ -261,9 +260,9 @@ static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
                                                  Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,
                                                  const FastParser *FP_RESTRICT fp,
                                                  void *FP_RESTRICT *FP_RESTRICT targets) {
-    uint64_t provided_mask   = 0;
-    const uint64_t tg_mask   = fp->type_guard_mask;
-    const size_t count       = fp->count;
+    uint64_t provided_mask = 0;
+    const uint64_t tg_mask = fp->type_guard_mask;
+    const size_t count = fp->count;
     const FastArgSpec *specs = fp->specs;
 
     // 1. Validate Positional Count
@@ -271,7 +270,8 @@ static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
         return fp_report_too_many(fp, nargs);
     }
 
-    // 2. Hot Path: Positional Arguments
+// 2. Hot Path: Positional Arguments
+#pragma unroll 4
     for (Py_ssize_t i = 0; i < nargs; ++i) {
         PyObject *val = args[i];
 
@@ -295,24 +295,25 @@ static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
 
     // 3. Keyword Arguments
     if (kwnames) {
-        const Py_ssize_t nkw     = PyTuple_GET_SIZE(kwnames);
+        const Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
         PyObject *const *kw_vals = args + nargs;
-        const uint16_t *ltable   = fp->lookup_table;
-        const size_t t_mask      = fp->table_mask;
+        const uint16_t *ltable = fp->lookup_table;
+        const size_t t_mask = fp->table_mask;
 
         for (Py_ssize_t i = 0; i < nkw; ++i) {
             PyObject *key = PyTuple_GET_ITEM(kwnames, i);
-            size_t idx    = FP_EMPTY_SLOT;
+            size_t idx = FP_EMPTY_SLOT;
 
             if (FP_LIKELY(ltable)) {
-                size_t h         = fp_hash_ptr(key, t_mask);
+                size_t h = fp_hash_ptr(key, t_mask);
                 size_t candidate = ltable[h];
 
                 // Check for Perfect Hash Hit
                 if (FP_LIKELY(candidate != FP_EMPTY_SLOT && specs[candidate].interned == key)) {
                     idx = candidate;
                 } else {
-                    // Collision resolution (Cold path)
+// Collision resolution (Cold path)
+#pragma unroll 4
                     while (ltable[h] != FP_EMPTY_SLOT) {
                         if (specs[ltable[h]].interned == key) {
                             idx = ltable[h];
@@ -325,6 +326,7 @@ static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
 
             // Fallback: Missing from table or un-interned keys
             if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
+#pragma unroll 4
                 for (size_t j = 0; j < count; ++j) {
                     if (specs[j].interned == key ||
                         PyUnicode_Compare(key, specs[j].interned) == 0) {
