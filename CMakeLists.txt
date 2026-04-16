@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 project(fast_capi LANGUAGES C)
 
+
 # 1. C23 Standard setup
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED OFF)
@@ -17,7 +18,13 @@ add_library(fast_capi_core STATIC
     src/fast_capi/fast_parse.c
 )
 
-target_compile_features(fast_capi_core PRIVATE c_std_23)
+# Bug for bug, bloody hell. Why can't CMake figure out how to apply flags to Clang-cl?
+if(NOT MSVC)
+    target_compile_features(fast_capi_core PRIVATE c_std_23)
+else()
+    # On Windows, we trust the shim or the user, because we just want it to goddamn compile.
+    target_compile_options(fast_capi_core PRIVATE $<$<C_COMPILER_ID:Clang>:/clang:-std=c23>)
+endif()
 
 # 4. Handle Include Paths for Submodule Use
 # PUBLIC ensures that when a parent project links to fast_capi_core,
