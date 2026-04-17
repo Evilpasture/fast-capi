@@ -202,13 +202,14 @@ error:
 
 #define FB_EXPAND(x) x
 
-#define FB_NARGS_IMPL(_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16,   \
+#define FB_NARGS_IMPL(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17,  \
+                      _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32,   \
                       N, ...)                                                                      \
     N
 
 #define FB_NARGS(...)                                                                              \
-    FB_NARGS_IMPL(0 __VA_OPT__(, ) __VA_ARGS__, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3,   \
-                  2, 1, 0)
+    FB_NARGS_IMPL(__VA_ARGS__, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, \
+                  15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
 
 #define FB_MAP_1(x) FB_VAL(x)
 #define FB_MAP_2(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_1(__VA_ARGS__))
@@ -226,6 +227,22 @@ error:
 #define FB_MAP_14(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_13(__VA_ARGS__))
 #define FB_MAP_15(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_14(__VA_ARGS__))
 #define FB_MAP_16(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_15(__VA_ARGS__))
+#define FB_MAP_17(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_16(__VA_ARGS__))
+#define FB_MAP_18(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_17(__VA_ARGS__))
+#define FB_MAP_19(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_18(__VA_ARGS__))
+#define FB_MAP_20(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_19(__VA_ARGS__))
+#define FB_MAP_21(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_20(__VA_ARGS__))
+#define FB_MAP_22(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_21(__VA_ARGS__))
+#define FB_MAP_23(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_22(__VA_ARGS__))
+#define FB_MAP_24(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_23(__VA_ARGS__))
+#define FB_MAP_25(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_24(__VA_ARGS__))
+#define FB_MAP_26(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_25(__VA_ARGS__))
+#define FB_MAP_27(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_26(__VA_ARGS__))
+#define FB_MAP_28(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_27(__VA_ARGS__))
+#define FB_MAP_29(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_28(__VA_ARGS__))
+#define FB_MAP_30(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_29(__VA_ARGS__))
+#define FB_MAP_31(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_30(__VA_ARGS__))
+#define FB_MAP_32(x, ...) FB_VAL(x), FB_EXPAND(FB_MAP_31(__VA_ARGS__))
 
 #define FB_CONCAT_IMPL(a, b) a##b
 #define FB_CONCAT(a, b) FB_CONCAT_IMPL(a, b)
