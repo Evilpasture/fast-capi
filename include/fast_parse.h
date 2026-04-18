@@ -5,17 +5,17 @@
 #include <stdint.h>
 
 #if defined(__GNUC__) || defined(__clang__)
-#define FP_LIKELY(x) __builtin_expect(!!(x), 1)
-#define FP_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#    define FP_LIKELY(x) __builtin_expect(!!(x), 1)
+#    define FP_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #else
-#define FP_LIKELY(x) (x)
-#define FP_UNLIKELY(x) (x)
+#    define FP_LIKELY(x) (x)
+#    define FP_UNLIKELY(x) (x)
 #endif
 
 #if defined(__cplusplus)
-#define FP_RESTRICT __restrict
+#    define FP_RESTRICT __restrict
 #else
-#define FP_RESTRICT restrict
+#    define FP_RESTRICT restrict
 #endif
 
 /**
@@ -28,10 +28,10 @@
  * ============================================================================
  */
 
-constexpr int FP_EMPTY_SLOT = 0xFFFF;
+static constexpr int FP_EMPTY_SLOT = 0xFFFF;
 
 /** --- 1. TYPES & STRUCTS --- **/
-
+static constexpr int pad_ = 7;
 typedef struct {
     const char *name;
     const char *type_name;
@@ -39,7 +39,7 @@ typedef struct {
     PyTypeObject *type_guard;
     bool (*convert)(PyObject *, void *);
     bool required;
-    uint8_t _pad[];
+    uint8_t _pad[pad_];
 } FastArgSpec;
 
 typedef struct FastParser FastParser;
@@ -298,7 +298,7 @@ static_assert(alignof(struct FastParser) == alignment_size);
 
 // Allow host projects to inject custom types
 #ifndef FP_CUSTOM_CONVERTERS
-#define FP_CUSTOM_CONVERTERS /* empty */
+#    define FP_CUSTOM_CONVERTERS /* empty */
 #endif
 
 extern void ERROR_FastParse_Unsupported_Type(void);
@@ -333,15 +333,16 @@ extern bool fp_report_multiple(const FastParser *fastparser, size_t index);
 extern bool fp_report_too_many(const FastParser *fastparser, Py_ssize_t nargs);
 extern void fp_init_impl(FastParser *fastparser, FastArgSpec *specs, size_t count);
 extern void fp_deinit(FastParser *fastparser);
-extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, PyObject *unused,
-                            const FastParser *fastparser, void **targets);
+extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
+                            const FastParser *FP_RESTRICT fastparser,
+                            void *FP_RESTRICT *FP_RESTRICT targets);
 
 /** --- 5. THE HOT PATH --- **/
 [[gnu::always_inline, gnu::const]]
 static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
     auto val = (uintptr_t)ptr;
     // Golden ratio multiplier spreads pointer bits effectively
-    constexpr auto gratio = 11400714819323198485ULL;
+    constexpr auto gratio     = 11400714819323198485ULL;
     constexpr auto shift_bits = 32ULL;
     return ((val * gratio) >> shift_bits) & mask;
 }
@@ -417,13 +418,13 @@ static inline bool fp_process_kw(const FastParser *FP_RESTRICT fastparse,
         return true;
     }
 
-    const Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
+    const Py_ssize_t nkw     = PyTuple_GET_SIZE(kwnames);
     PyObject *const *kw_vals = args + nargs;
 
 #pragma unroll 2
     for (Py_ssize_t i = 0; i < nkw; ++i) {
         PyObject *key = PyTuple_GET_ITEM(kwnames, i);
-        size_t idx = fp_find_keyword_index(key, fastparse);
+        size_t idx    = fp_find_keyword_index(key, fastparse);
 
         if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
             PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
@@ -447,6 +448,18 @@ static inline bool fp_process_kw(const FastParser *FP_RESTRICT fastparse,
     return true;
 }
 
+[[gnu::always_inline, gnu::const]]
+static inline uint64_t fp_make_mask(size_t n) {
+    if (n == 0) {
+        return 0;
+    }
+    static constexpr uint64_t FULL_BITS = 64;
+    if (n >= FULL_BITS) {
+        return ~(uint64_t)0;
+    }
+    return (1ULL << n) - 1;
+}
+
 // unadulterated speed!!!
 [[nodiscard, gnu::always_inline, gnu::flatten, gnu::hot, gnu::no_stack_protector,
   gnu::nonnull(1, 4, 5)]] static inline bool
@@ -463,8 +476,8 @@ fp_parse_vector(PyObject *const *FP_RESTRICT args, Py_ssize_t nargs, PyObject *F
     }
 
     // 3. Setup Mask & Handle Keywords
-    static constexpr uint64_t FULL_BITS = 64;
-    uint64_t mask = (nargs >= FULL_BITS) ? ~(uint64_t)0 : (1ULL << (size_t)nargs) - 1;
+
+    uint64_t mask = fp_make_mask(nargs);
     if (FP_UNLIKELY(!fp_process_kw(fastparse, args, nargs, kwnames, &mask, targets))) {
         return false;
     }
@@ -481,7 +494,7 @@ fp_parse_vector(PyObject *const *FP_RESTRICT args, Py_ssize_t nargs, PyObject *F
 
 // Triggered if argument 1 is of an unsupported type
 extern void ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr(void);
-
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define FastParse_Unified(arg1, arg2, arg3, arg4, arg5)                                            \
     _Generic((arg1),                                                                               \
         PyObject *const *: (arg4)->hot_path,                                                       \
@@ -489,7 +502,7 @@ extern void ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr(voi
         PyObject *: fp_parse_legacy,                                                               \
         default: ERROR_FastParse_First_Arg_Must_Be_PyObject_Ptr_Or_Vectorcall_Ptr)(                \
         (arg1), (arg2), (arg3), (arg4), (arg5))
-
+// NOLINTNEXTLINE(readability-identifier-naming)
 #define FastParse_Init(fastparser, specs, count)                                                   \
     do {                                                                                           \
         static_assert((count) <= 64, "FastParse only supports up to 64 arguments");                \

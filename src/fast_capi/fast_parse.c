@@ -11,7 +11,7 @@ static_assert(sizeof(MONO_STUBS) / sizeof(FastParseFunc) == 5,
 bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask) {
 #pragma unroll 2
     for (size_t i = 0; i < fastparser->count; i++) {
-        if (fastparser->specs[i].required && !(provided_mask & (1ULL << i))) {
+        if ((int)fastparser->specs[i].required && !(provided_mask & (1ULL << i))) {
             PyErr_Format(PyExc_TypeError, "required argument '%s' missing",
                          fastparser->specs[i].name);
             return false;
@@ -21,7 +21,7 @@ bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask) {
 }
 
 bool fp_report_type_error(const FastParser *fastparser, size_t index, PyObject *val) {
-    const FastArgSpec *spec = &fastparser->specs[index];
+    const FastArgSpec *spec   = &fastparser->specs[index];
     const char *expected_type = "unknown";
 
     if (spec->type_name) {
@@ -52,11 +52,11 @@ void fp_init_impl(FastParser *fastparser, FastArgSpec *specs, size_t count) {
         Py_FatalError("FastParse: Argument count exceeds 64.");
     }
 
-    fastparser->specs = specs;
-    fastparser->count = count;
-    fastparser->required_mask = 0;
+    fastparser->specs           = specs;
+    fastparser->count           = count;
+    fastparser->required_mask   = 0;
     fastparser->type_guard_mask = 0;
-    fastparser->lookup_table = nullptr;
+    fastparser->lookup_table    = nullptr;
 #pragma unroll 2
     for (size_t i = 0; i < count; i++) {
         if (specs[i].name) {
@@ -77,7 +77,7 @@ void fp_init_impl(FastParser *fastparser, FastArgSpec *specs, size_t count) {
             table_size <<= 1UL;
         }
 
-        fastparser->table_mask = table_size - 1;
+        fastparser->table_mask   = table_size - 1;
         fastparser->lookup_table = (uint16_t *)malloc(table_size * sizeof(uint16_t));
         if (!fastparser->lookup_table) {
             Py_FatalError("FastParse: Failed to allocate lookup table.");
@@ -125,78 +125,79 @@ void fp_deinit(FastParser *fastparser) {
         fastparser->lookup_table = nullptr;
     }
 }
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] bool fp_parse_legacy(PyObject *args, PyObject *kwargs,
-                                   [[maybe_unused]] PyObject *unused, const FastParser *fastparser,
-                                   void **targets) {
-    uint64_t provided_mask = 0;
-    const size_t count = fastparser->count;
+                                   [[maybe_unused]] PyObject *unused,
+                                   const FastParser *FP_RESTRICT fastparser,
+                                   void *FP_RESTRICT *FP_RESTRICT targets) {
+    uint64_t provided_mask   = 0;
+    const size_t count       = fastparser->count;
     const FastArgSpec *specs = fastparser->specs;
+    const uint64_t tg_mask   = fastparser->type_guard_mask;
 
+    // 1. Process Positional Arguments (from Tuple)
     if (args) {
-        Py_ssize_t nargs = PyTuple_GET_SIZE(args);
+        const Py_ssize_t nargs = PyTuple_GET_SIZE(args);
         if (FP_UNLIKELY(nargs > (Py_ssize_t)count)) {
             return fp_report_too_many(fastparser, nargs);
         }
-#pragma unroll 2
+
         for (Py_ssize_t i = 0; i < nargs; ++i) {
-            provided_mask |= (1ULL << (uint64_t)i);
-            if (FP_UNLIKELY(!specs[i].convert(PyTuple_GET_ITEM(args, i), targets[i]))) {
+            PyObject *val = PyTuple_GET_ITEM(args, i);
+
+            // Apply type guard if present
+            if (!fp_check_type_guard(&specs[i], val, tg_mask, (size_t)i)) {
+                return fp_report_type_error(fastparser, (size_t)i, val);
+            }
+
+            // Convert
+            if (FP_UNLIKELY(!specs[i].convert(val, targets[i]))) {
                 return false;
             }
+            provided_mask |= (1ULL << (size_t)i);
         }
     }
 
-    if (kwargs) {
-        PyObject *key = nullptr;
-        PyObject *val = nullptr;
+    // 2. Process Keyword Arguments (from Dict)
+    if (kwargs && PyDict_Size(kwargs) > 0) {
+        PyObject *key  = nullptr;
+        PyObject *val  = nullptr;
         Py_ssize_t pos = 0;
+
         while (PyDict_Next(kwargs, &pos, &key, &val)) {
-            size_t idx = FP_EMPTY_SLOT;
-
-            if (FP_LIKELY(fastparser->lookup_table)) {
-                size_t hash = fp_hash_ptr(key, fastparser->table_mask);
-#pragma unroll 2
-                while (fastparser->lookup_table[hash] != FP_EMPTY_SLOT) {
-                    size_t candidate = fastparser->lookup_table[hash];
-                    if (FP_LIKELY(specs[candidate].interned == key)) {
-                        idx = candidate;
-                        break;
-                    }
-                    hash = (hash + 1) & fastparser->table_mask;
-                }
-            }
+            // Use your unified lookup logic (Hash Table -> Linear Search fallback)
+            size_t idx = fp_find_keyword_index(key, fastparser);
 
             if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
-#pragma unroll 2
-                for (size_t i = 0; i < count; ++i) {
-                    if (specs[i].interned == key ||
-                        PyUnicode_Compare(key, specs[i].interned) == 0) {
-                        idx = i;
-                        break;
-                    }
-                }
-            }
-
-            if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
-                PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
+                PyErr_Format(PyExc_TypeError,
+                             "'%s' is an invalid keyword argument for this function",
+                             PyUnicode_AsUTF8(key));
                 return false;
             }
 
+            // Check if this argument was already provided positionally
             if (FP_UNLIKELY(provided_mask & (1ULL << idx))) {
                 return fp_report_multiple(fastparser, idx);
             }
 
-            provided_mask |= (1ULL << idx);
+            // Apply type guard
+            if (!fp_check_type_guard(&specs[idx], val, tg_mask, idx)) {
+                return fp_report_type_error(fastparser, idx, val);
+            }
+
+            // Convert
             if (FP_UNLIKELY(!specs[idx].convert(val, targets[idx]))) {
                 return false;
             }
+            provided_mask |= (1ULL << idx);
         }
     }
 
+    // 3. Final Verification: Check for missing required arguments
     if (FP_UNLIKELY((provided_mask & fastparser->required_mask) != fastparser->required_mask)) {
         return fp_report_missing(fastparser, provided_mask);
     }
 
-    return (PyErr_Occurred() == nullptr);
+    return true;
 }
