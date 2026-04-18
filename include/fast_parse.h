@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Python.h>
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -100,8 +99,8 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                        const FastParser *FP_RESTRICT fastparser,
                                                        void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 2 && kwnames == nullptr)) {
-        return (fastparser->specs[0].convert(args[0], targets[0]) &&
-                fastparser->specs[1].convert(args[1], targets[1])) != 0;
+        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
+                (int)fastparser->specs[1].convert(args[1], targets[1])) != 0;
     }
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
@@ -112,9 +111,9 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                        const FastParser *FP_RESTRICT fastparser,
                                                        void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 3 && kwnames == nullptr)) {
-        return (fastparser->specs[0].convert(args[0], targets[0]) &&
-                fastparser->specs[1].convert(args[1], targets[1]) &&
-                fastparser->specs[2].convert(args[2], targets[2])) != 0;
+        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
+                (int)fastparser->specs[1].convert(args[1], targets[1]) &&
+                (int)fastparser->specs[2].convert(args[2], targets[2])) != 0;
     }
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
@@ -125,10 +124,10 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                        const FastParser *FP_RESTRICT fastparser,
                                                        void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 4 && kwnames == nullptr)) {
-        return (fastparser->specs[0].convert(args[0], targets[0]) &&
-                fastparser->specs[1].convert(args[1], targets[1]) &&
-                fastparser->specs[2].convert(args[2], targets[2]) &&
-                fastparser->specs[3].convert(args[3], targets[3])) != 0;
+        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
+                (int)fastparser->specs[1].convert(args[1], targets[1]) &&
+                (int)fastparser->specs[2].convert(args[2], targets[2]) &&
+                (int)fastparser->specs[3].convert(args[3], targets[3])) != 0;
     }
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
@@ -272,6 +271,31 @@ static_assert(alignof(struct FastParser) == alignment_size);
     return true;
 }
 
+[[nodiscard]] static inline bool fp_conv_ssize(PyObject *obj, void *target) {
+    // HOT PATH: Exact integer match
+    if (FP_LIKELY(PyLong_CheckExact(obj))) {
+        Py_ssize_t val = PyLong_AsSsize_t(obj);
+        // Optimization: Values like buffer sizes and counts are rarely exactly -1.
+        if (FP_LIKELY(val != -1)) {
+            *(Py_ssize_t *)target = val;
+            return true;
+        }
+    }
+
+    // COLD PATH: Handle None, subclasses, or the literal value -1
+    if (obj == Py_None) {
+        PyErr_SetString(PyExc_TypeError, "size/index argument cannot be None");
+        return false;
+    }
+
+    Py_ssize_t val = PyLong_AsSsize_t(obj);
+    if (val == -1 && PyErr_Occurred()) {
+        return false;
+    }
+    *(Py_ssize_t *)target = val;
+    return true;
+}
+
 // Allow host projects to inject custom types
 #ifndef FP_CUSTOM_CONVERTERS
 #define FP_CUSTOM_CONVERTERS /* empty */
@@ -286,6 +310,7 @@ extern void ERROR_FastParse_Unsupported_Type(void);
         int: fp_conv_int,                                                                          \
         uint32_t: fp_conv_u32,                                                                     \
         uint64_t: fp_conv_u64,                                                                     \
+        Py_ssize_t: fp_conv_ssize,                                                                 \
         bool: fp_conv_bool,                                                                        \
         const char *: fp_conv_str,                                                                 \
         PyObject *: fp_conv_pyobj FP_CUSTOM_CONVERTERS, /* INJECTION POINT */                      \
