@@ -331,6 +331,7 @@ extern bool fp_report_type_error(const FastParser *fastparser, size_t index, PyO
 extern bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask);
 extern bool fp_report_multiple(const FastParser *fastparser, size_t index);
 extern bool fp_report_too_many(const FastParser *fastparser, Py_ssize_t nargs);
+extern bool fp_report_unknown_keyword(const FastParser *fastparser, PyObject *key);
 extern void fp_init_impl(FastParser *fastparser, FastArgSpec *specs, size_t count);
 extern void fp_deinit(FastParser *fastparser);
 extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
@@ -427,8 +428,7 @@ static inline bool fp_process_kw(const FastParser *FP_RESTRICT fastparse,
         size_t idx    = fp_find_keyword_index(key, fastparse);
 
         if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
-            PyErr_Format(PyExc_TypeError, "unexpected keyword argument '%U'", key);
-            return false;
+            return fp_report_unknown_keyword(fastparse, key);
         }
 
         if (FP_UNLIKELY(*mask & (1ULL << idx))) {

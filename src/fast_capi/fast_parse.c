@@ -9,14 +9,31 @@ static_assert(sizeof(MONO_STUBS) / sizeof(FastParseFunc) == 5,
               "MONO_STUBS table must contain exactly 5 stubs (0-4 args)");
 
 bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask) {
-#pragma unroll 2
+    PyObject *missing_list = PyList_New(0);
+    if (!missing_list) {
+        return false;
+    }
+
     for (size_t i = 0; i < fastparser->count; i++) {
         if ((int)fastparser->specs[i].required && !(provided_mask & (1ULL << i))) {
-            PyErr_Format(PyExc_TypeError, "required argument '%s' missing",
-                         fastparser->specs[i].name);
-            return false;
+            PyList_Append(missing_list, PyUnicode_FromString(fastparser->specs[i].name));
         }
     }
+
+    Py_ssize_t num_missing = PyList_Size(missing_list);
+    if (num_missing == 1) {
+        PyErr_Format(PyExc_TypeError, "missing 1 required positional argument: '%U'",
+                     PyList_GetItem(missing_list, 0));
+    } else if (num_missing > 1) {
+        PyObject *comma  = PyUnicode_FromString("', '");
+        PyObject *joined = PyUnicode_Join(comma, missing_list);
+        PyErr_Format(PyExc_TypeError, "missing %zd required positional arguments: '%U'",
+                     num_missing, joined);
+        Py_XDECREF(joined);
+        Py_XDECREF(comma);
+    }
+
+    Py_DECREF(missing_list);
     return false;
 }
 
@@ -44,6 +61,92 @@ bool fp_report_multiple(const FastParser *fastparser, size_t index) {
 bool fp_report_too_many(const FastParser *fastparser, Py_ssize_t nargs) {
     PyErr_Format(PyExc_TypeError, "too many positional arguments (expected %zu, got %zd)",
                  fastparser->count, nargs);
+    return false;
+}
+
+[[gnu::always_inline]]
+static inline int fp_min3(int a, int b, int c) {
+    int m = a;
+    if (b < m)
+        m = b;
+    if (c < m)
+        m = c;
+    return m;
+}
+
+static int fp_levenshtein(const char *s1, const char *s2) {
+    // Assume s1 is the user input, s2 is the candidate from specs
+    // Strip prefixes like 'ob_' or '_' if your interning logic needs it
+    int len1 = (int)strlen(s1);
+    int len2 = (int)strlen(s2);
+
+    // Swap to ensure len1 >= len2 for smaller stack usage
+    if (len1 < len2) {
+        const char *tmp = s1;
+        s1              = s2;
+        s2              = tmp;
+        int t           = len1;
+        len1            = len2;
+        len2            = t;
+    }
+
+    if (len2 == 0) {
+        return len1;
+    }
+    if (len1 > 64) {
+        len1 = 64; // Cap for safety
+    }
+
+    // uint8_t is enough for distance on 64-char strings
+    alignas(16) uint8_t column[65];
+#pragma unroll 4
+    for (int i = 0; i <= len2; i++) {
+        column[i] = (uint8_t)i;
+    }
+#pragma unroll 4
+    for (int x = 1; x <= len1; x++) {
+        column[0]         = (uint8_t)x;
+        uint8_t last_diag = (uint8_t)(x - 1);
+        for (int y = 1; y <= len2; y++) {
+            uint8_t old_column = column[y];
+            uint8_t cost       = (s1[x - 1] != s2[y - 1]);
+
+            // Branchless min if your compiler doesn't do it automatically
+            column[y] = fp_min3(column[y] + 1,     // Deletion
+                                column[y - 1] + 1, // Insertion
+                                last_diag + cost); // Substitution
+            last_diag = old_column;
+        }
+    }
+    return (int)column[len2];
+}
+
+bool fp_report_unknown_keyword(const FastParser *fastparser, PyObject *key) {
+    const char *actual_name = PyUnicode_AsUTF8(key);
+    if (!actual_name) {
+        return false;
+    }
+
+    const char *best_match = nullptr;
+    int best_dist          = 100;
+
+    for (size_t i = 0; i < fastparser->count; i++) {
+        const char *cand = fastparser->specs[i].name;
+        int dist         = fp_levenshtein(actual_name, cand);
+
+        if (dist < best_dist) {
+            best_dist  = dist;
+            best_match = cand;
+        }
+    }
+
+    // Only suggest if the match is reasonably close (distance < 3)
+    if (best_match && best_dist < 3) {
+        PyErr_Format(PyExc_TypeError, "'%s' is an invalid keyword argument; did you mean '%s'?",
+                     actual_name, best_match);
+    } else {
+        PyErr_Format(PyExc_TypeError, "'%s' is an invalid keyword argument", actual_name);
+    }
     return false;
 }
 
@@ -170,10 +273,7 @@ void fp_deinit(FastParser *fastparser) {
             size_t idx = fp_find_keyword_index(key, fastparser);
 
             if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
-                PyErr_Format(PyExc_TypeError,
-                             "'%s' is an invalid keyword argument for this function",
-                             PyUnicode_AsUTF8(key));
-                return false;
+                return fp_report_unknown_keyword(fastparser, key);
             }
 
             // Check if this argument was already provided positionally
