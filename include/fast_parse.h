@@ -132,6 +132,37 @@ static_assert(alignof(struct FastParser) == alignment_size);
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
 
+[[nodiscard]] static inline bool fp_speculate_p5_naked(PyObject *const *FP_RESTRICT args,
+                                                       Py_ssize_t nargs,
+                                                       PyObject *FP_RESTRICT kwnames,
+                                                       const FastParser *FP_RESTRICT fastparser,
+                                                       void *FP_RESTRICT *FP_RESTRICT targets) {
+    if (FP_LIKELY(nargs == 5 && kwnames == nullptr)) {
+        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
+                (int)fastparser->specs[1].convert(args[1], targets[1]) &&
+                (int)fastparser->specs[2].convert(args[2], targets[2]) &&
+                (int)fastparser->specs[3].convert(args[3], targets[3]) &&
+                (int)fastparser->specs[4].convert(args[4], targets[4])) != 0;
+    }
+    return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
+}
+
+[[nodiscard]] static inline bool fp_speculate_p6_naked(PyObject *const *FP_RESTRICT args,
+                                                       Py_ssize_t nargs,
+                                                       PyObject *FP_RESTRICT kwnames,
+                                                       const FastParser *FP_RESTRICT fastparser,
+                                                       void *FP_RESTRICT *FP_RESTRICT targets) {
+    if (FP_LIKELY(nargs == 6 && kwnames == nullptr)) {
+        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
+                (int)fastparser->specs[1].convert(args[1], targets[1]) &&
+                (int)fastparser->specs[2].convert(args[2], targets[2]) &&
+                (int)fastparser->specs[3].convert(args[3], targets[3]) &&
+                (int)fastparser->specs[4].convert(args[4], targets[4]) &&
+                (int)fastparser->specs[5].convert(args[5], targets[5])) != 0;
+    }
+    return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
+}
+
 /** --- 3. CONVERTER DISPATCH --- **/
 
 [[nodiscard]] static inline bool fp_conv_bool_naked(PyObject *obj, void *target) {

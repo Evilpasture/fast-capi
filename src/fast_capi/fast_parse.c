@@ -1,12 +1,13 @@
 #include "fast_parse.h"
 #include <stdlib.h>
 
-static const FastParseFunc MONO_STUBS[] = {fp_speculate_p0, fp_speculate_p1_naked,
-                                           fp_speculate_p2_naked, fp_speculate_p3_naked,
-                                           fp_speculate_p4_naked};
+static const FastParseFunc MONO_STUBS[] = {
+    fp_speculate_p0,       fp_speculate_p1_naked, fp_speculate_p2_naked, fp_speculate_p3_naked,
+    fp_speculate_p4_naked, fp_speculate_p5_naked, fp_speculate_p6_naked};
 
-static_assert(sizeof(MONO_STUBS) / sizeof(FastParseFunc) == 5,
-              "MONO_STUBS table must contain exactly 5 stubs (0-4 args)");
+static constexpr size_t STUBS_SIZE = 7;
+static_assert(sizeof(MONO_STUBS) / sizeof(FastParseFunc) == STUBS_SIZE,
+              "MONO_STUBS table must contain exactly 7 stubs (0-6 args)");
 
 bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask) {
     PyObject *missing_list = PyList_New(0);
