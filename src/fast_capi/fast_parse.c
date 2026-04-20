@@ -2,12 +2,14 @@
 #include <stdlib.h>
 
 static const FastParseFunc MONO_STUBS[] = {
-    fp_speculate_p0,       fp_speculate_p1_naked, fp_speculate_p2_naked, fp_speculate_p3_naked,
-    fp_speculate_p4_naked, fp_speculate_p5_naked, fp_speculate_p6_naked};
+    fp_speculate_p0,       fp_speculate_p1_naked, fp_speculate_p2_naked, 
+    fp_speculate_p3_naked, fp_speculate_p4_naked, fp_speculate_p5_naked, 
+    fp_speculate_p6_naked, fp_speculate_p7_naked, fp_speculate_p8_naked
+};
 
-static constexpr size_t STUBS_SIZE = 7;
+static constexpr size_t STUBS_SIZE = 9;
 static_assert(sizeof(MONO_STUBS) / sizeof(FastParseFunc) == STUBS_SIZE,
-              "MONO_STUBS table must contain exactly 7 stubs (0-6 args)");
+              "MONO_STUBS table must contain exactly 9 stubs (0-8 args)");
 
 bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask) {
     const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";

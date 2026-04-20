@@ -29,7 +29,7 @@
  */
 
 static constexpr int FP_EMPTY_SLOT = 0xFFFF;
-static constexpr int FP_PAD_  = 7;
+static constexpr int FP_PAD_       = 7;
 /** --- 1. TYPES & STRUCTS --- **/
 
 typedef struct {
@@ -39,7 +39,7 @@ typedef struct {
     PyTypeObject *type_guard;
     bool (*convert)(PyObject *, void *);
     bool required;
-    uint8_t _pad[FP_PAD_ ];
+    uint8_t _pad[FP_PAD_];
 } FastArgSpec;
 
 typedef struct FastParser FastParser;
@@ -73,8 +73,6 @@ static_assert(alignof(struct FastParser) == alignment_size);
 
 /** --- 2. SPECULATIVE STUBS (Monomorphic fast-paths) --- **/
 
-/** --- 1. INDEX ENUMS --- **/
-
 enum FastParseIndex : uint8_t {
     FP_IDX_0,
     FP_IDX_1,
@@ -82,11 +80,27 @@ enum FastParseIndex : uint8_t {
     FP_IDX_3,
     FP_IDX_4,
     FP_IDX_5,
-    FP_IDX_6
+    FP_IDX_6,
+    FP_IDX_7,
+    FP_IDX_8
 };
 
-/** --- 2. SPECULATIVE STUBS (Monomorphic fast-paths) --- **/
+// Individual conversion call using the Enum
+#define FP_CALL_CONV(n)                                                                            \
+    (int)fastparser->specs[FP_IDX_##n].convert(args[FP_IDX_##n], targets[FP_IDX_##n])
 
+// Stub Function Boilerplate
+#define FP_GEN_STUB(N, ...)                                                                        \
+    [[nodiscard]] static inline bool fp_speculate_p##N##_naked(                                    \
+        PyObject *const *FP_RESTRICT args, Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,        \
+        const FastParser *FP_RESTRICT fastparser, void *FP_RESTRICT *FP_RESTRICT targets) {        \
+        if (FP_LIKELY(nargs == N && kwnames == nullptr)) {                                         \
+            return (__VA_ARGS__) != 0;                                                             \
+        }                                                                                          \
+        return fp_parse_vector(args, nargs, kwnames, fastparser, targets);                         \
+    }
+
+// 0 Args (Special case)
 [[nodiscard]] static inline bool fp_speculate_p0(PyObject *const *FP_RESTRICT args,
                                                  Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,
                                                  const FastParser *FP_RESTRICT fastparser,
@@ -97,86 +111,26 @@ enum FastParseIndex : uint8_t {
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
 
-[[nodiscard]] static inline bool fp_speculate_p1_naked(PyObject *const *FP_RESTRICT args,
-                                                       Py_ssize_t nargs,
-                                                       PyObject *FP_RESTRICT kwnames,
-                                                       const FastParser *FP_RESTRICT fastparser,
-                                                       void *FP_RESTRICT *FP_RESTRICT targets) {
-    if (FP_LIKELY(nargs == 1 && kwnames == nullptr)) {
-        return fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]);
-    }
-    return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
-}
+// Generate stubs 1 through 8
+FP_GEN_STUB(1, FP_CALL_CONV(0))
 
-[[nodiscard]] static inline bool fp_speculate_p2_naked(PyObject *const *FP_RESTRICT args,
-                                                       Py_ssize_t nargs,
-                                                       PyObject *FP_RESTRICT kwnames,
-                                                       const FastParser *FP_RESTRICT fastparser,
-                                                       void *FP_RESTRICT *FP_RESTRICT targets) {
-    if (FP_LIKELY(nargs == 2 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
-                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1])) != 0;
-    }
-    return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
-}
+FP_GEN_STUB(2, FP_CALL_CONV(0) && FP_CALL_CONV(1))
 
-[[nodiscard]] static inline bool fp_speculate_p3_naked(PyObject *const *FP_RESTRICT args,
-                                                       Py_ssize_t nargs,
-                                                       PyObject *FP_RESTRICT kwnames,
-                                                       const FastParser *FP_RESTRICT fastparser,
-                                                       void *FP_RESTRICT *FP_RESTRICT targets) {
-    if (FP_LIKELY(nargs == 3 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
-                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1]) &&
-                (int)fastparser->specs[FP_IDX_2].convert(args[FP_IDX_2], targets[FP_IDX_2])) != 0;
-    }
-    return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
-}
+FP_GEN_STUB(3, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2))
 
-[[nodiscard]] static inline bool fp_speculate_p4_naked(PyObject *const *FP_RESTRICT args,
-                                                       Py_ssize_t nargs,
-                                                       PyObject *FP_RESTRICT kwnames,
-                                                       const FastParser *FP_RESTRICT fastparser,
-                                                       void *FP_RESTRICT *FP_RESTRICT targets) {
-    if (FP_LIKELY(nargs == 4 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
-                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1]) &&
-                (int)fastparser->specs[FP_IDX_2].convert(args[FP_IDX_2], targets[FP_IDX_2]) &&
-                (int)fastparser->specs[FP_IDX_3].convert(args[FP_IDX_3], targets[FP_IDX_3])) != 0;
-    }
-    return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
-}
+FP_GEN_STUB(4, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_CONV(3))
 
-[[nodiscard]] static inline bool fp_speculate_p5_naked(PyObject *const *FP_RESTRICT args,
-                                                       Py_ssize_t nargs,
-                                                       PyObject *FP_RESTRICT kwnames,
-                                                       const FastParser *FP_RESTRICT fastparser,
-                                                       void *FP_RESTRICT *FP_RESTRICT targets) {
-    if (FP_LIKELY(nargs == 5 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
-                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1]) &&
-                (int)fastparser->specs[FP_IDX_2].convert(args[FP_IDX_2], targets[FP_IDX_2]) &&
-                (int)fastparser->specs[FP_IDX_3].convert(args[FP_IDX_3], targets[FP_IDX_3]) &&
-                (int)fastparser->specs[FP_IDX_4].convert(args[FP_IDX_4], targets[FP_IDX_4])) != 0;
-    }
-    return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
-}
+FP_GEN_STUB(5, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_CONV(3) &&
+                   FP_CALL_CONV(4))
 
-[[nodiscard]] static inline bool fp_speculate_p6_naked(PyObject *const *FP_RESTRICT args,
-                                                       Py_ssize_t nargs,
-                                                       PyObject *FP_RESTRICT kwnames,
-                                                       const FastParser *FP_RESTRICT fastparser,
-                                                       void *FP_RESTRICT *FP_RESTRICT targets) {
-    if (FP_LIKELY(nargs == 6 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
-                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1]) &&
-                (int)fastparser->specs[FP_IDX_2].convert(args[FP_IDX_2], targets[FP_IDX_2]) &&
-                (int)fastparser->specs[FP_IDX_3].convert(args[FP_IDX_3], targets[FP_IDX_3]) &&
-                (int)fastparser->specs[FP_IDX_4].convert(args[FP_IDX_4], targets[FP_IDX_4]) &&
-                (int)fastparser->specs[FP_IDX_5].convert(args[FP_IDX_5], targets[FP_IDX_5])) != 0;
-    }
-    return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
-}
+FP_GEN_STUB(6, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_CONV(3) &&
+                   FP_CALL_CONV(4) && FP_CALL_CONV(5))
+
+FP_GEN_STUB(7, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_CONV(3) &&
+                   FP_CALL_CONV(4) && FP_CALL_CONV(5) && FP_CALL_CONV(6))
+
+FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_CONV(3) &&
+                   FP_CALL_CONV(4) && FP_CALL_CONV(5) && FP_CALL_CONV(6) && FP_CALL_CONV(7))
 
 /** --- 3. CONVERTER DISPATCH --- **/
 
