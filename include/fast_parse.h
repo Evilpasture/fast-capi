@@ -29,9 +29,9 @@
  */
 
 static constexpr int FP_EMPTY_SLOT = 0xFFFF;
-
+static constexpr int FP_PAD_  = 7;
 /** --- 1. TYPES & STRUCTS --- **/
-static constexpr int pad_ = 7;
+
 typedef struct {
     const char *name;
     const char *type_name;
@@ -39,7 +39,7 @@ typedef struct {
     PyTypeObject *type_guard;
     bool (*convert)(PyObject *, void *);
     bool required;
-    uint8_t _pad[pad_];
+    uint8_t _pad[FP_PAD_ ];
 } FastArgSpec;
 
 typedef struct FastParser FastParser;
@@ -59,9 +59,10 @@ struct FastParser {
     size_t table_mask;
     uint64_t required_mask;
     uint64_t type_guard_mask;
+    bool warned;
 };
 
-static_assert(sizeof(struct FastParser) == alignment_size);
+static_assert(sizeof(struct FastParser) == (size_t)alignment_size * 2);
 static_assert(alignof(struct FastParser) == alignment_size);
 
 // Forward declaration of the generic fallback
@@ -69,6 +70,20 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                  Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,
                                                  const FastParser *FP_RESTRICT fastparser,
                                                  void *FP_RESTRICT *FP_RESTRICT targets);
+
+/** --- 2. SPECULATIVE STUBS (Monomorphic fast-paths) --- **/
+
+/** --- 1. INDEX ENUMS --- **/
+
+enum FastParseIndex : uint8_t {
+    FP_IDX_0,
+    FP_IDX_1,
+    FP_IDX_2,
+    FP_IDX_3,
+    FP_IDX_4,
+    FP_IDX_5,
+    FP_IDX_6
+};
 
 /** --- 2. SPECULATIVE STUBS (Monomorphic fast-paths) --- **/
 
@@ -88,7 +103,7 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                        const FastParser *FP_RESTRICT fastparser,
                                                        void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 1 && kwnames == nullptr)) {
-        return fastparser->specs[0].convert(args[0], targets[0]);
+        return fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]);
     }
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
@@ -99,8 +114,8 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                        const FastParser *FP_RESTRICT fastparser,
                                                        void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 2 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
-                (int)fastparser->specs[1].convert(args[1], targets[1])) != 0;
+        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
+                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1])) != 0;
     }
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
@@ -111,9 +126,9 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                        const FastParser *FP_RESTRICT fastparser,
                                                        void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 3 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
-                (int)fastparser->specs[1].convert(args[1], targets[1]) &&
-                (int)fastparser->specs[2].convert(args[2], targets[2])) != 0;
+        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
+                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1]) &&
+                (int)fastparser->specs[FP_IDX_2].convert(args[FP_IDX_2], targets[FP_IDX_2])) != 0;
     }
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
@@ -124,10 +139,10 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                        const FastParser *FP_RESTRICT fastparser,
                                                        void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 4 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
-                (int)fastparser->specs[1].convert(args[1], targets[1]) &&
-                (int)fastparser->specs[2].convert(args[2], targets[2]) &&
-                (int)fastparser->specs[3].convert(args[3], targets[3])) != 0;
+        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
+                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1]) &&
+                (int)fastparser->specs[FP_IDX_2].convert(args[FP_IDX_2], targets[FP_IDX_2]) &&
+                (int)fastparser->specs[FP_IDX_3].convert(args[FP_IDX_3], targets[FP_IDX_3])) != 0;
     }
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
@@ -138,11 +153,11 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                        const FastParser *FP_RESTRICT fastparser,
                                                        void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 5 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
-                (int)fastparser->specs[1].convert(args[1], targets[1]) &&
-                (int)fastparser->specs[2].convert(args[2], targets[2]) &&
-                (int)fastparser->specs[3].convert(args[3], targets[3]) &&
-                (int)fastparser->specs[4].convert(args[4], targets[4])) != 0;
+        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
+                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1]) &&
+                (int)fastparser->specs[FP_IDX_2].convert(args[FP_IDX_2], targets[FP_IDX_2]) &&
+                (int)fastparser->specs[FP_IDX_3].convert(args[FP_IDX_3], targets[FP_IDX_3]) &&
+                (int)fastparser->specs[FP_IDX_4].convert(args[FP_IDX_4], targets[FP_IDX_4])) != 0;
     }
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
@@ -153,24 +168,17 @@ static_assert(alignof(struct FastParser) == alignment_size);
                                                        const FastParser *FP_RESTRICT fastparser,
                                                        void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 6 && kwnames == nullptr)) {
-        return ((int)fastparser->specs[0].convert(args[0], targets[0]) &&
-                (int)fastparser->specs[1].convert(args[1], targets[1]) &&
-                (int)fastparser->specs[2].convert(args[2], targets[2]) &&
-                (int)fastparser->specs[3].convert(args[3], targets[3]) &&
-                (int)fastparser->specs[4].convert(args[4], targets[4]) &&
-                (int)fastparser->specs[5].convert(args[5], targets[5])) != 0;
+        return ((int)fastparser->specs[FP_IDX_0].convert(args[FP_IDX_0], targets[FP_IDX_0]) &&
+                (int)fastparser->specs[FP_IDX_1].convert(args[FP_IDX_1], targets[FP_IDX_1]) &&
+                (int)fastparser->specs[FP_IDX_2].convert(args[FP_IDX_2], targets[FP_IDX_2]) &&
+                (int)fastparser->specs[FP_IDX_3].convert(args[FP_IDX_3], targets[FP_IDX_3]) &&
+                (int)fastparser->specs[FP_IDX_4].convert(args[FP_IDX_4], targets[FP_IDX_4]) &&
+                (int)fastparser->specs[FP_IDX_5].convert(args[FP_IDX_5], targets[FP_IDX_5])) != 0;
     }
     return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
 
 /** --- 3. CONVERTER DISPATCH --- **/
-
-[[nodiscard]] static inline bool fp_conv_bool_naked(PyObject *obj, void *target) {
-    // Singletons in Python are fixed addresses.
-    // This is essentially free compared to PyObject_IsTrue.
-    *(bool *)target = (obj == Py_True);
-    return true;
-}
 
 [[nodiscard]] static inline bool fp_conv_float(PyObject *obj, void *target) {
     // HOT PATH: Exact float match (Pointer comparison)
@@ -211,71 +219,111 @@ static_assert(alignof(struct FastParser) == alignment_size);
 }
 
 [[nodiscard]] static inline bool fp_conv_int(PyObject *obj, void *target) {
-    // HOT PATH: Exact integer match
-    if (FP_LIKELY(PyLong_CheckExact(obj))) {
-        long val = PyLong_AsLong(obj);
-        // Optimization: In 99% of cases (sizes, counts, locations),
-        // the value is not -1. We can skip the expensive thread-local
-        // storage lookup of PyErr_Occurred().
-        if (FP_LIKELY(val != -1)) {
-            *(int *)target = (int)val;
-            return true;
-        }
+    // 1. Singletons (Pointer identity is the fastest possible check)
+    if (obj == Py_True) {
+        *(int *)target = 1;
+        return true;
+    }
+    if (obj == Py_False) {
+        *(int *)target = 0;
+        return true;
     }
 
-    // COLD PATH: Handle None, subclasses, or the literal value -1
-    if (obj == Py_None) {
+    // 2. None Check (Cold path, but keeps PyLong_AsLong clean)
+    if (FP_UNLIKELY(obj == Py_None)) {
         PyErr_SetString(PyExc_TypeError, "int argument cannot be None");
         return false;
     }
+
+    // 3. Single Conversion Call
     long val = PyLong_AsLong(obj);
-    if (val == -1 && PyErr_Occurred()) {
+
+    // 4. Hot Path: 99.9% of integers in physics/logic are not -1
+    if (FP_LIKELY(val != -1)) {
+        *(int *)target = (int)val;
+        return true;
+    }
+
+    // 5. Cold Path: Was it actually -1 or a conversion error?
+    if (PyErr_Occurred()) {
         return false;
     }
-    *(int *)target = (int)val;
+
+    *(int *)target = -1;
     return true;
 }
 
 [[nodiscard]] static inline bool fp_conv_u32(PyObject *obj, void *target) {
-    if (FP_LIKELY(PyLong_CheckExact(obj))) {
-        unsigned long val = PyLong_AsUnsignedLong(obj);
-        // (unsigned long)-1 is the error sentinel
-        if (FP_LIKELY(val != (unsigned long)-1)) {
-            *(uint32_t *)target = (uint32_t)val;
-            return true;
-        }
+    if (obj == Py_True) {
+        *(uint32_t *)target = 1;
+        return true;
     }
-
-    if (obj == Py_None) {
+    if (obj == Py_False) {
+        *(uint32_t *)target = 0;
+        return true;
+    }
+    if (FP_UNLIKELY(obj == Py_None)) {
         PyErr_SetString(PyExc_TypeError, "uint32 argument cannot be None");
         return false;
     }
+
     unsigned long val = PyLong_AsUnsignedLong(obj);
-    if (val == (unsigned long)-1 && PyErr_Occurred()) {
+
+    if (FP_LIKELY(val != (unsigned long)-1)) {
+        *(uint32_t *)target = (uint32_t)val;
+        return true;
+    }
+
+    if (PyErr_Occurred()) {
         return false;
     }
-    *(uint32_t *)target = (uint32_t)val;
+
+    *(uint32_t *)target = (uint32_t)-1;
     return true;
 }
 
 [[nodiscard]] static inline bool fp_conv_u64(PyObject *obj, void *target) {
-    if (FP_LIKELY(PyLong_CheckExact(obj))) {
-        unsigned long long val = PyLong_AsUnsignedLongLong(obj);
-        if (FP_LIKELY(val != (unsigned long long)-1)) {
-            *(uint64_t *)target = (uint64_t)val;
-            return true;
-        }
+    if (obj == Py_True) {
+        *(uint64_t *)target = 1;
+        return true;
+    }
+    if (obj == Py_False) {
+        *(uint64_t *)target = 0;
+        return true;
+    }
+    // u64 often used for handles, which might be None
+    if (obj == Py_None) {
+        *(uint64_t *)target = 0;
+        return true;
     }
 
     unsigned long long val = PyLong_AsUnsignedLongLong(obj);
-    if (val == (unsigned long long)-1 && PyErr_Occurred()) {
+
+    if (FP_LIKELY(val != (unsigned long long)-1)) {
+        *(uint64_t *)target = (uint64_t)val;
+        return true;
+    }
+
+    if (PyErr_Occurred()) {
         return false;
     }
-    *(uint64_t *)target = (uint64_t)val;
+
+    *(uint64_t *)target = (uint64_t)-1;
     return true;
 }
 
 [[nodiscard]] static inline bool fp_conv_bool(PyObject *obj, void *target) {
+    // Exact pointer check for the singletons
+    if (obj == Py_True) {
+        *(bool *)target = true;
+        return true;
+    }
+    if (obj == Py_False) {
+        *(bool *)target = false;
+        return true;
+    }
+
+    // Fallback for truthiness of lists, strings, etc.
     int val = PyObject_IsTrue(obj);
     if (FP_UNLIKELY(val == -1)) {
         return false;
@@ -347,11 +395,34 @@ extern void ERROR_FastParse_Unsupported_Type(void);
         PyObject *: fp_conv_pyobj FP_CUSTOM_CONVERTERS, /* INJECTION POINT */                      \
         default: ERROR_FastParse_Unsupported_Type)
 
+#ifndef FP_CUSTOM_TYPE_NAMES
+#    define FP_CUSTOM_TYPE_NAMES /* empty */
+#endif
+
+#define FP_GET_TYPE_NAME(T)                                                                        \
+    _Generic((T),                                                                                  \
+        float: "float",                                                                            \
+        double: "float",                                                                           \
+        int: "int",                                                                                \
+        uint32_t: "int",                                                                           \
+        uint64_t: "int",                                                                           \
+        Py_ssize_t: "int",                                                                         \
+        bool: "bool",                                                                              \
+        const char *: "str",                                                                       \
+        PyObject *: "object" FP_CUSTOM_TYPE_NAMES, /* INJECTION POINT */                           \
+        default: "any")
+
 #define FP_ARG(name_str, var)                                                                      \
-    {.name = (name_str), .convert = FP_GET_CONVERTER((typeof_unqual(var)){0}), .required = false}
+    {.name      = (name_str),                                                                      \
+     .type_name = FP_GET_TYPE_NAME((typeof_unqual(var)){}),                                        \
+     .convert   = FP_GET_CONVERTER((typeof_unqual(var)){}),                                        \
+     .required  = false}
 
 #define FP_REQ_ARG(name_str, var)                                                                  \
-    {.name = (name_str), .convert = FP_GET_CONVERTER((typeof_unqual(var)){0}), .required = true}
+    {.name      = (name_str),                                                                      \
+     .type_name = FP_GET_TYPE_NAME((typeof_unqual(var)){}),                                        \
+     .convert   = FP_GET_CONVERTER((typeof_unqual(var)){}),                                        \
+     .required  = true}
 
 #define FP_ARG_CUSTOM(name_str, conv_func)                                                         \
     {.name = (name_str), .convert = (conv_func), .required = false}
@@ -397,6 +468,7 @@ static inline bool fp_check_type_guard(const FastArgSpec *FP_RESTRICT spec,
 static inline size_t fp_find_keyword_index(PyObject *FP_RESTRICT key,
                                            const FastParser *FP_RESTRICT fastparse) {
     const uint16_t *ltable = fastparse->lookup_table;
+    size_t found_idx       = FP_EMPTY_SLOT;
 
     // 1. Try Hash Table if it exists
     if (FP_LIKELY(ltable != nullptr)) {
@@ -407,6 +479,11 @@ static inline size_t fp_find_keyword_index(PyObject *FP_RESTRICT key,
             if (fastparse->specs[candidate].interned == key) {
                 return candidate;
             }
+            // Performance hit: matching string content but different pointers
+            if (FP_UNLIKELY(PyUnicode_Compare(key, fastparse->specs[candidate].interned) == 0)) {
+                found_idx = candidate;
+                goto trigger_warning;
+            }
             hash = (hash + 1) & fastparse->table_mask;
         }
     }
@@ -414,17 +491,40 @@ static inline size_t fp_find_keyword_index(PyObject *FP_RESTRICT key,
     // 2. Fallback: Linear search (Crucial for small arg counts < 8)
 #pragma unroll 4
     for (size_t j = 0; j < fastparse->count; ++j) {
-        // Fast path: check interned pointer first
         if (fastparse->specs[j].interned == key) {
             return j;
         }
-        // Slow path: full string comparison
-        if (PyUnicode_Compare(key, fastparse->specs[j].interned) == 0) {
-            return j;
+        if (FP_UNLIKELY(PyUnicode_Compare(key, fastparse->specs[j].interned) == 0)) {
+            found_idx = j;
+            goto trigger_warning;
         }
     }
 
     return FP_EMPTY_SLOT;
+
+trigger_warning: {
+    // I don't think I want to make this an atomic operation considering that parsing is almost
+    // always single-threaded. Avoids header bloat. If it's a race somehow, no big deal.
+    if (FP_UNLIKELY(fastparse->warned == false)) {
+        // UB. It's just a bool...
+        bool *warn_ptr = (bool *)&fastparse->warned;
+        *warn_ptr      = true;
+        // If PyErr_WarnFormat returns < 0, a Warning was upgraded to an Error.
+        // We return FP_EMPTY_SLOT to allow the caller to abort and propagate the error.
+        if (PyErr_WarnFormat(PyExc_RuntimeWarning, 1,
+                             "Priority Alert: Specific keyword '%U' in parser implementation '%s' "
+                             "is not interned. \n"
+                             "This condition mandates a slow string comparison and degrades "
+                             "performance significantly. \n"
+                             "Sanitize the environment by interning strings manually with "
+                             "sys.intern() immediately.",
+                             key,
+                             fastparse->parser_name ? fastparse->parser_name : "unknown") < 0) {
+            return FP_EMPTY_SLOT;
+        }
+    }
+}
+    return found_idx;
 }
 [[gnu::always_inline]]
 static inline bool fp_process_pos(const FastParser *FP_RESTRICT fastparse,

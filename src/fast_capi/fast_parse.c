@@ -10,69 +10,276 @@ static_assert(sizeof(MONO_STUBS) / sizeof(FastParseFunc) == STUBS_SIZE,
               "MONO_STUBS table must contain exactly 7 stubs (0-6 args)");
 
 bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask) {
-    PyObject *missing_list = PyList_New(0);
-    if (!missing_list) {
+    const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
+
+    PyObject *missing_details = PyList_New(0);
+    PyObject *signature_parts = PyList_New(0);
+
+    // If we can't allocate lists for the fancy error, fall back to a basic error
+    if (FP_UNLIKELY(!missing_details || !signature_parts)) {
+        Py_XDECREF(missing_details);
+        Py_XDECREF(signature_parts);
+        PyErr_Format(PyExc_TypeError, "%s() missing required positional arguments", pname);
         return false;
     }
 
     for (size_t i = 0; i < fastparser->count; i++) {
-        if ((int)fastparser->specs[i].required && !(provided_mask & (1ULL << i))) {
-            PyList_Append(missing_list, PyUnicode_FromString(fastparser->specs[i].name));
+        const FastArgSpec *spec   = &fastparser->specs[i];
+        const char *fallback_name = spec->type_guard ? spec->type_guard->tp_name : "object";
+        const char *type_info     = spec->type_name ? spec->type_name : fallback_name;
+
+        bool is_provided = (provided_mask & (1ULL << i)) != 0;
+        if (spec->required && !is_provided) {
+            PyObject *m = PyUnicode_FromFormat("    - %s (%s)", spec->name, type_info);
+            if (m) {
+                PyList_Append(missing_details, m);
+                Py_DECREF(m);
+            }
+        }
+
+        PyObject *sig_part = (int)spec->required
+                                 ? PyUnicode_FromFormat("%s: %s", spec->name, type_info)
+                                 : PyUnicode_FromFormat("[%s: %s]", spec->name, type_info);
+
+        if (sig_part) {
+            PyList_Append(signature_parts, sig_part);
+            Py_DECREF(sig_part);
         }
     }
 
-    Py_ssize_t num_missing = PyList_Size(missing_list);
-    if (num_missing == 1) {
-        PyErr_Format(PyExc_TypeError, "missing 1 required positional argument: '%U'",
-                     PyList_GetItem(missing_list, 0));
-    } else if (num_missing > 1) {
-        PyObject *comma  = PyUnicode_FromString("', '");
-        PyObject *joined = PyUnicode_Join(comma, missing_list);
-        PyErr_Format(PyExc_TypeError, "missing %zd required positional arguments: '%U'",
-                     num_missing, joined);
-        Py_XDECREF(joined);
-        Py_XDECREF(comma);
+    Py_ssize_t num_missing = PyList_Size(missing_details);
+    PyObject *newline      = PyUnicode_FromString("\n");
+    PyObject *comma        = PyUnicode_FromString(", ");
+
+    // Check for NULL before joining
+    PyObject *joined_missing = (newline) ? PyUnicode_Join(newline, missing_details) : nullptr;
+    PyObject *joined_sig     = (comma) ? PyUnicode_Join(comma, signature_parts) : nullptr;
+
+    if (joined_missing && joined_sig) {
+        PyErr_Format(
+            PyExc_TypeError,
+            "%s() missing %zd required positional argument%s:\n%U\n\nExpected signature:\n  %s(%U)",
+            pname, num_missing, num_missing == 1 ? "" : "s", joined_missing, pname, joined_sig);
+    } else {
+        // Ultimate fallback if string joining failed
+        PyErr_Format(PyExc_TypeError, "%s() missing %zd required positional arguments", pname,
+                     num_missing);
     }
 
-    Py_DECREF(missing_list);
+    // Cleanup: XDECREF is safe for nullptrs
+    Py_XDECREF(newline);
+    Py_XDECREF(comma);
+    Py_XDECREF(joined_missing);
+    Py_XDECREF(joined_sig);
+    Py_XDECREF(missing_details);
+    Py_XDECREF(signature_parts);
+
     return false;
 }
 
 bool fp_report_type_error(const FastParser *fastparser, size_t index, PyObject *val) {
-    const FastArgSpec *spec   = &fastparser->specs[index];
-    const char *expected_type = "unknown";
+    const FastArgSpec *spec = &fastparser->specs[index];
+    const char *pname       = fastparser->parser_name ? fastparser->parser_name : "function";
 
-    if (spec->type_name) {
-        expected_type = spec->type_name;
-    } else if (spec->type_guard) {
-        expected_type = spec->type_guard->tp_name;
+    const char *fallback_name = (spec->type_guard) ? spec->type_guard->tp_name : "object";
+    const char *expected      = (spec->type_name) ? spec->type_name : fallback_name;
+
+    PyObject *val_repr        = nullptr;
+    PyObject *signature_parts = nullptr;
+    PyObject *comma           = nullptr;
+    PyObject *joined_sig      = nullptr;
+
+    // 1. Safe Repr Acquisition
+    val_repr = PyObject_Repr(val);
+    if (FP_UNLIKELY(!val_repr)) {
+        PyErr_Clear(); // Clear OOM from Repr to set our TypeError
+        val_repr = PyUnicode_FromString("<repr unavailable>");
+    } else if (PyUnicode_GetLength(val_repr) > 100) {
+        PyObject *truncated = PyUnicode_Substring(val_repr, 0, 97);
+        if (truncated) {
+            PyObject *fmt = PyUnicode_FromFormat("%U...", truncated);
+            Py_DECREF(truncated);
+            if (fmt) {
+                Py_DECREF(val_repr);
+                val_repr = fmt;
+            }
+        }
     }
 
-    PyErr_Format(PyExc_TypeError, "argument '%s' must be %s, not %.200s", spec->name, expected_type,
-                 Py_TYPE(val)->tp_name);
+    // 2. Diagnostic Signature Construction
+    signature_parts = PyList_New(0);
+    if (FP_UNLIKELY(!signature_parts)) {
+        goto basic_error;
+    }
+
+    for (size_t i = 0; i < fastparser->count; i++) {
+        const FastArgSpec *s = &fastparser->specs[i];
+        const char *fb       = s->type_guard ? s->type_guard->tp_name : "object";
+        const char *t        = s->type_name ? s->type_name : fb;
+
+        static const char *FMT_MAP[] = {"[%s: %s]", "%s: %s"};
+        const char *fmt = (i == index) ? "!!! %s: %s !!!" : FMT_MAP[(int)s->required != 0];
+
+        PyObject *part = PyUnicode_FromFormat(fmt, s->name, t);
+
+        if (part) {
+            PyList_Append(signature_parts, part);
+            Py_DECREF(part);
+        }
+    }
+
+    comma = PyUnicode_FromString(", ");
+    if (FP_UNLIKELY(!comma)) {
+        goto basic_error;
+    }
+
+    joined_sig = PyUnicode_Join(comma, signature_parts);
+    if (FP_UNLIKELY(!joined_sig)) {
+        goto basic_error;
+    }
+
+    // 3. Final Fancy Format
+    PyErr_Format(PyExc_TypeError,
+                 "%s() argument '%s' must be %s, not %s.\n\n"
+                 "Received value: %U\n"
+                 "Signature context:\n  %s(%U)",
+                 pname, spec->name, expected, Py_TYPE(val)->tp_name, val_repr ? val_repr : Py_None,
+                 pname, joined_sig);
+    goto cleanup;
+
+basic_error:
+    // If we ran out of memory making the fancy message, at least give the standard one
+    PyErr_Format(PyExc_TypeError, "%s() argument '%s' must be %s, not %s", pname, spec->name,
+                 expected, Py_TYPE(val)->tp_name);
+
+cleanup:
+    Py_XDECREF(comma);
+    Py_XDECREF(joined_sig);
+    Py_XDECREF(signature_parts);
+    Py_XDECREF(val_repr);
     return false;
 }
 
 bool fp_report_multiple(const FastParser *fastparser, size_t index) {
-    PyErr_Format(PyExc_TypeError, "argument '%s' got multiple values",
-                 fastparser->specs[index].name);
+    const char *pname    = fastparser->parser_name ? fastparser->parser_name : "function";
+    const char *arg_name = fastparser->specs[index].name;
+
+    PyObject *parts = nullptr;
+    PyObject *comma = nullptr;
+    PyObject *sig   = nullptr;
+
+    // 1. Diagnostic Signature Construction
+    parts = PyList_New(0);
+    if (FP_UNLIKELY(!parts)) {
+        goto basic_error;
+    }
+
+    for (size_t i = 0; i < fastparser->count; i++) {
+        const char *name = fastparser->specs[i].name;
+        PyObject *p =
+            (i == index) ? PyUnicode_FromFormat("!!! %s !!!", name) : PyUnicode_FromString(name);
+        if (p) {
+            PyList_Append(parts, p);
+            Py_DECREF(p);
+        }
+    }
+
+    comma = PyUnicode_FromString(", ");
+    if (FP_UNLIKELY(!comma)) {
+        goto basic_error;
+    }
+
+    sig = PyUnicode_Join(comma, parts);
+    if (FP_UNLIKELY(!sig)) {
+        goto basic_error;
+    }
+
+    // 2. Final Fancy Format
+    PyErr_Format(PyExc_TypeError,
+                 "%s() got multiple values for argument '%s'.\n"
+                 "It was provided both as a positional argument and as a keyword argument.\n\n"
+                 "Signature context:\n  %s(%U)",
+                 pname, arg_name, pname, sig);
+    goto cleanup;
+
+basic_error:
+    // Fallback if we can't allocate the fancy message
+    PyErr_Format(PyExc_TypeError, "%s() got multiple values for argument '%s'", pname, arg_name);
+
+cleanup:
+    Py_XDECREF(comma);
+    Py_XDECREF(sig);
+    Py_XDECREF(parts);
     return false;
 }
 
 bool fp_report_too_many(const FastParser *fastparser, Py_ssize_t nargs) {
-    PyErr_Format(PyExc_TypeError, "too many positional arguments (expected %zu, got %zd)",
-                 fastparser->count, nargs);
+    const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
+
+    PyObject *parts = nullptr;
+    PyObject *comma = nullptr;
+    PyObject *sig   = nullptr;
+
+    // 1. Calculate counts (Stack-based, safe)
+    size_t req_count = 0;
+    for (size_t i = 0; i < fastparser->count; i++) {
+        if (fastparser->specs[i].required) { req_count++;
+}
+    }
+    size_t total_count = fastparser->count;
+
+    char count_str[64];
+    if (req_count == total_count) {
+        snprintf(count_str, sizeof(count_str), "%zu", total_count);
+    } else {
+        snprintf(count_str, sizeof(count_str), "from %zu to %zu", req_count, total_count);
+    }
+
+    // 2. Diagnostic Signature Construction
+    parts = PyList_New(0);
+    if (FP_UNLIKELY(!parts)) { goto basic_error;
+}
+
+    for (size_t i = 0; i < total_count; i++) {
+        PyObject *p = PyUnicode_FromString(fastparser->specs[i].name);
+        if (p) {
+            PyList_Append(parts, p);
+            Py_DECREF(p);
+        }
+    }
+
+    comma = PyUnicode_FromString(", ");
+    if (FP_UNLIKELY(!comma)) { goto basic_error;
+}
+
+    sig = PyUnicode_Join(comma, parts);
+    if (FP_UNLIKELY(!sig)) { goto basic_error;
+}
+
+    // 3. Final Fancy Format
+    PyErr_Format(PyExc_TypeError,
+                 "%s() takes %s positional arguments but %zd were given.\n\n"
+                 "This function does not accept variable positional arguments (*args).\n"
+                 "Expected sequence:\n  %s(%U)",
+                 pname, count_str, nargs, pname, sig);
+    goto cleanup;
+
+basic_error:
+    // Fallback if we can't allocate the fancy message
+    PyErr_Format(PyExc_TypeError, "%s() takes %s positional arguments but %zd were given", 
+                 pname, count_str, nargs);
+
+cleanup:
+    Py_XDECREF(comma);
+    Py_XDECREF(sig);
+    Py_XDECREF(parts);
     return false;
 }
 
-[[gnu::always_inline]]
+[[gnu::always_inline, gnu::const]]
 static inline int fp_min3(int a, int b, int c) {
-    int m = a;
-    if (b < m)
-        m = b;
-    if (c < m)
-        m = c;
-    return m;
+    int m = a < b ? a : b;
+    return m < c ? m : c;
 }
 
 static int fp_levenshtein(const char *s1, const char *s2) {
@@ -128,26 +335,90 @@ bool fp_report_unknown_keyword(const FastParser *fastparser, PyObject *key) {
         return false;
     }
 
-    const char *best_match = nullptr;
-    int best_dist          = 100;
+    const char *best_match           = nullptr;
+    constexpr auto initial_best_dist = 100;
+    int best_dist                    = initial_best_dist;
+    const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
 
+    PyObject *valid_args_list = nullptr;
+    PyObject *newline         = nullptr;
+    PyObject *joined          = nullptr;
+
+    // 1. Find the best fuzzy match (Stack-based, no OOM risk)
     for (size_t i = 0; i < fastparser->count; i++) {
         const char *cand = fastparser->specs[i].name;
-        int dist         = fp_levenshtein(actual_name, cand);
-
+        if (!cand) {
+            continue;
+        }
+        int dist = fp_levenshtein(actual_name, cand);
         if (dist < best_dist) {
             best_dist  = dist;
             best_match = cand;
         }
     }
 
-    // Only suggest if the match is reasonably close (distance < 3)
-    if (best_match && best_dist < 3) {
-        PyErr_Format(PyExc_TypeError, "'%s' is an invalid keyword argument; did you mean '%s'?",
-                     actual_name, best_match);
-    } else {
-        PyErr_Format(PyExc_TypeError, "'%s' is an invalid keyword argument", actual_name);
+    // 2. Diagnostic Message Construction
+    valid_args_list = PyList_New(0);
+    if (FP_UNLIKELY(!valid_args_list)) {
+        goto basic_error;
     }
+
+    for (size_t i = 0; i < fastparser->count; i++) {
+        const FastArgSpec *spec = &fastparser->specs[i];
+        if (!spec->name) {
+            continue;
+        }
+
+        const char *fb = spec->type_guard ? spec->type_guard->tp_name : "object";
+        const char *t  = spec->type_name ? spec->type_name : fb;
+
+        PyObject *info = PyUnicode_FromFormat("    - %s: %s%s", spec->name, t,
+                                              (int)spec->required ? " [required]" : "");
+        if (info) {
+            PyList_Append(valid_args_list, info);
+            Py_DECREF(info);
+        }
+    }
+
+    newline = PyUnicode_FromString("\n");
+    if (FP_UNLIKELY(!newline)) {
+        goto basic_error;
+    }
+
+    joined = PyUnicode_Join(newline, valid_args_list);
+    if (FP_UNLIKELY(!joined)) {
+        goto basic_error;
+    }
+
+    // 3. Format "Did you mean" suggestion
+    static constexpr auto suggestion_buffer = 256;
+    char suggestion[suggestion_buffer];
+    suggestion[0] = '\0';
+    if (best_match && best_dist < 3) {
+        snprintf(suggestion, sizeof(suggestion), " Did you mean '%s'?", best_match);
+    }
+
+    // 4. Final Fancy Format
+    PyErr_Format(PyExc_TypeError,
+                 "'%s' is an invalid keyword argument for %s().%s\nValid arguments are:\n%U",
+                 actual_name, pname, suggestion, joined);
+    goto cleanup;
+
+basic_error:
+    // Fallback logic
+    if (best_match && best_dist < 3) {
+        PyErr_Format(PyExc_TypeError,
+                     "'%s' is an invalid keyword argument for %s(); did you mean '%s'?",
+                     actual_name, pname, best_match);
+    } else {
+        PyErr_Format(PyExc_TypeError, "'%s' is an invalid keyword argument for %s()", actual_name,
+                     pname);
+    }
+
+cleanup:
+    Py_XDECREF(newline);
+    Py_XDECREF(joined);
+    Py_XDECREF(valid_args_list);
     return false;
 }
 
@@ -161,6 +432,7 @@ void fp_init_impl(FastParser *fastparser, FastArgSpec *specs, size_t count) {
     fastparser->required_mask   = 0;
     fastparser->type_guard_mask = 0;
     fastparser->lookup_table    = nullptr;
+    fastparser->warned          = false;
 #pragma unroll 2
     for (size_t i = 0; i < count; i++) {
         if (specs[i].name) {
@@ -230,74 +502,89 @@ void fp_deinit(FastParser *fastparser) {
     }
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-[[nodiscard]] bool fp_parse_legacy(PyObject *args, PyObject *kwargs,
-                                   [[maybe_unused]] PyObject *unused,
-                                   const FastParser *FP_RESTRICT fastparser,
-                                   void *FP_RESTRICT *FP_RESTRICT targets) {
-    uint64_t provided_mask   = 0;
-    const size_t count       = fastparser->count;
-    const FastArgSpec *specs = fastparser->specs;
-    const uint64_t tg_mask   = fastparser->type_guard_mask;
+/** --- LEGACY HELPERS --- **/
 
-    // 1. Process Positional Arguments (from Tuple)
-    if (args) {
-        const Py_ssize_t nargs = PyTuple_GET_SIZE(args);
-        if (FP_UNLIKELY(nargs > (Py_ssize_t)count)) {
-            return fp_report_too_many(fastparser, nargs);
+[[gnu::always_inline]]
+static inline bool fp_process_pos_legacy(const FastParser *FP_RESTRICT fastparse, PyObject *args,
+                                         Py_ssize_t nargs, void *FP_RESTRICT *FP_RESTRICT targets) {
+#pragma unroll 2
+    for (Py_ssize_t i = 0; i < nargs; ++i) {
+        PyObject *val = PyTuple_GET_ITEM(args, i);
+        if (!fp_check_type_guard(&fastparse->specs[i], val, fastparse->type_guard_mask,
+                                 (size_t)i)) {
+            return fp_report_type_error(fastparse, (size_t)i, val);
+        }
+        if (FP_UNLIKELY(!fastparse->specs[i].convert(val, targets[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[gnu::always_inline]]
+static inline bool fp_process_kw_legacy(const FastParser *FP_RESTRICT fastparse, PyObject *kwargs,
+                                        uint64_t *FP_RESTRICT mask,
+                                        void *FP_RESTRICT *FP_RESTRICT targets) {
+    PyObject *key;
+    PyObject *val;
+    Py_ssize_t pos = 0;
+
+    while (PyDict_Next(kwargs, &pos, &key, &val)) {
+        size_t idx = fp_find_keyword_index(key, fastparse);
+
+        if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
+            return fp_report_unknown_keyword(fastparse, key);
         }
 
-        for (Py_ssize_t i = 0; i < nargs; ++i) {
-            PyObject *val = PyTuple_GET_ITEM(args, i);
+        if (FP_UNLIKELY(*mask & (1ULL << idx))) {
+            return fp_report_multiple(fastparse, idx);
+        }
 
-            // Apply type guard if present
-            if (!fp_check_type_guard(&specs[i], val, tg_mask, (size_t)i)) {
-                return fp_report_type_error(fastparser, (size_t)i, val);
-            }
+        if (!fp_check_type_guard(&fastparse->specs[idx], val, fastparse->type_guard_mask, idx)) {
+            return fp_report_type_error(fastparse, idx, val);
+        }
 
-            // Convert
-            if (FP_UNLIKELY(!specs[i].convert(val, targets[i]))) {
-                return false;
-            }
-            provided_mask |= (1ULL << (size_t)i);
+        if (FP_UNLIKELY(!fastparse->specs[idx].convert(val, targets[idx]))) {
+            return false;
+        }
+        *mask |= (1ULL << idx);
+    }
+    return true;
+}
+
+/** --- ORCHESTRATOR --- **/
+
+[[nodiscard, gnu::flatten]]
+bool fp_parse_legacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
+                     const FastParser *FP_RESTRICT fastparser,
+                     void *FP_RESTRICT *FP_RESTRICT targets) {
+
+    Py_ssize_t nargs = args ? PyTuple_GET_SIZE(args) : 0;
+
+    // 1. Pre-flight Check
+    if (FP_UNLIKELY(nargs > (Py_ssize_t)fastparser->count)) {
+        return fp_report_too_many(fastparser, nargs);
+    }
+
+    // 2. Handle Positionals
+    if (nargs > 0) {
+        if (FP_UNLIKELY(!fp_process_pos_legacy(fastparser, args, nargs, targets))) {
+            return false;
         }
     }
 
-    // 2. Process Keyword Arguments (from Dict)
-    if (kwargs && PyDict_Size(kwargs) > 0) {
-        PyObject *key  = nullptr;
-        PyObject *val  = nullptr;
-        Py_ssize_t pos = 0;
+    // 3. Setup Mask & Handle Keywords
+    uint64_t mask = fp_make_mask((size_t)nargs);
 
-        while (PyDict_Next(kwargs, &pos, &key, &val)) {
-            // Use your unified lookup logic (Hash Table -> Linear Search fallback)
-            size_t idx = fp_find_keyword_index(key, fastparser);
-
-            if (FP_UNLIKELY(idx == FP_EMPTY_SLOT)) {
-                return fp_report_unknown_keyword(fastparser, key);
-            }
-
-            // Check if this argument was already provided positionally
-            if (FP_UNLIKELY(provided_mask & (1ULL << idx))) {
-                return fp_report_multiple(fastparser, idx);
-            }
-
-            // Apply type guard
-            if (!fp_check_type_guard(&specs[idx], val, tg_mask, idx)) {
-                return fp_report_type_error(fastparser, idx, val);
-            }
-
-            // Convert
-            if (FP_UNLIKELY(!specs[idx].convert(val, targets[idx]))) {
-                return false;
-            }
-            provided_mask |= (1ULL << idx);
+    if (kwargs && PyDict_GET_SIZE(kwargs) > 0) {
+        if (FP_UNLIKELY(!fp_process_kw_legacy(fastparser, kwargs, &mask, targets))) {
+            return false;
         }
     }
 
-    // 3. Final Verification: Check for missing required arguments
-    if (FP_UNLIKELY((provided_mask & fastparser->required_mask) != fastparser->required_mask)) {
-        return fp_report_missing(fastparser, provided_mask);
+    // 4. Final Verification
+    if (FP_UNLIKELY((mask & fastparser->required_mask) != fastparser->required_mask)) {
+        return fp_report_missing(fastparser, mask);
     }
 
     return true;
