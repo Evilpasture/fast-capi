@@ -8,28 +8,28 @@
 /* --- 0. CONFIGURATION & COMPILER COMPATIBILITY --- */
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
-#ifndef _NULLPTR_T
-#define _NULLPTR_T
+#    ifndef _NULLPTR_T
+#        define _NULLPTR_T
 typedef typeof(nullptr) nullptr_t;
-#endif
+#    endif
 #endif
 
 #ifndef FB_LIKELY
-#if defined(__GNUC__) || defined(__clang__)
-#define FB_LIKELY(x) __builtin_expect(!!(x), 1)
-#define FB_UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-#define FB_LIKELY(x) (x)
-#define FB_UNLIKELY(x) (x)
-#endif
+#    if defined(__GNUC__) || defined(__clang__)
+#        define FB_LIKELY(x) __builtin_expect(!!(x), 1)
+#        define FB_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#    else
+#        define FB_LIKELY(x) (x)
+#        define FB_UNLIKELY(x) (x)
+#    endif
 #endif
 
 #ifndef FB_NODISCARD
-#define FB_NODISCARD [[nodiscard]]
+#    define FB_NODISCARD [[nodiscard]]
 #endif
 
 #ifndef FB_FORCE_INLINE
-#define FB_FORCE_INLINE inline
+#    define FB_FORCE_INLINE inline
 #endif
 
 /* --- 1. TYPE CONSTRUCTORS (Inlined) --- */
@@ -43,9 +43,7 @@ FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_double(double v) {
 FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_int(int v) {
     return PyLong_FromLong((long)v);
 }
-FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_long(long v) {
-    return PyLong_FromLong(v);
-}
+FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_long(long v) { return PyLong_FromLong(v); }
 FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_from_longlong(long long v) {
     return PyLong_FromLongLong(v);
 }
@@ -77,7 +75,7 @@ extern PyObject *FB_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD(void);
 
 // Allow host projects to inject custom builders
 #ifndef FB_CUSTOM_CONVERTERS
-#define FB_CUSTOM_CONVERTERS /* empty */
+#    define FB_CUSTOM_CONVERTERS /* empty */
 #endif
 
 #define FB_VAL(x)                                                                                  \
@@ -160,11 +158,6 @@ error:
 FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_pack_dict(size_t n, PyObject **arr) {
     if (FB_UNLIKELY(n == 0)) {
         return PyDict_New();
-    }
-
-    // Must be key-value pairs
-    if (FB_UNLIKELY(n % 2 != 0)) {
-        goto error;
     }
 #pragma unroll 4
     for (size_t i = 0; i < n; i++) {
@@ -265,6 +258,8 @@ error:
                                             : nullptr)
 
 #define FastBuild_Dict(...)                                                                        \
-    fb_pack_dict(FB_NARGS(__VA_ARGS__), FB_NARGS(__VA_ARGS__)                                      \
-                                            ? (PyObject *[]){__VA_OPT__(FB_MAP(__VA_ARGS__))}      \
-                                            : nullptr)
+    (FB_NARGS(__VA_ARGS__) % 2 == 0                                                                \
+         ? fb_pack_dict(FB_NARGS(__VA_ARGS__),                                                     \
+                        FB_NARGS(__VA_ARGS__) ? (PyObject *[]){__VA_OPT__(FB_MAP(__VA_ARGS__))}    \
+                                              : nullptr)                                           \
+         : FB_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD()) // This will fail to link or compile
