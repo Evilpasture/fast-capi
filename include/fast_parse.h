@@ -91,6 +91,8 @@ extern bool fp_report_multiple(const FastParser *fastparser, size_t index);
 extern bool fp_report_too_many(const FastParser *fastparser, Py_ssize_t nargs);
 [[gnu::noinline]]
 extern bool fp_report_unknown_keyword(const FastParser *fastparser, PyObject *key);
+[[gnu::noinline]]
+extern bool fp_report_conversion_error(const FastParser *fastparser, size_t index, PyObject *val);
 extern void fp_init_impl(FastParser *fastparser, const FastArgDef *defs, size_t count);
 extern void fp_deinit(FastParser *fastparser);
 extern bool fp_parse_legacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
@@ -574,7 +576,7 @@ static inline bool fp_process_pos(const FastParser *FP_RESTRICT fastparse,
 
         // 2. Conversion
         if (FP_UNLIKELY(!spec->convert(args[i], targets[i]))) {
-            return false;
+            return fp_report_conversion_error(fastparse, (size_t)i, args[i]);
         }
     }
     return true;
@@ -610,7 +612,7 @@ static inline bool fp_process_kw(const FastParser *FP_RESTRICT fastparse,
         }
 
         if (FP_UNLIKELY(!fastparse->hot_specs[idx].convert(kw_vals[i], targets[idx]))) {
-            return false;
+            return fp_report_conversion_error(fastparse, idx, kw_vals[i]);
         }
         *mask |= (1ULL << idx);
     }
@@ -626,7 +628,7 @@ static inline uint64_t fp_make_mask(size_t n) {
     if (n >= FULL_BITS) {
         return ~(uint64_t)0;
     }
-    return (1ULL << n) - 1;
+    return (n >= 64) ? ~(uint64_t)0 : (1ULL << n) - 1;
 }
 
 // unadulterated speed!!!

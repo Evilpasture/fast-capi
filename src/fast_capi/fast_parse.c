@@ -355,7 +355,7 @@ bool fp_report_unknown_keyword(const FastParser *fastparser, PyObject *key) {
     if (!actual_name) {
         return false;
     }
-
+    constexpr auto max_dist          = 3;
     const char *best_match           = nullptr;
     constexpr auto initial_best_dist = 100;
     int best_dist                    = initial_best_dist;
@@ -421,7 +421,7 @@ bool fp_report_unknown_keyword(const FastParser *fastparser, PyObject *key) {
     static constexpr auto suggestion_buffer = 256;
     char suggestion[suggestion_buffer];
     suggestion[0] = '\0';
-    if (best_match && best_dist < 3) {
+    if (best_match && best_dist < max_dist) {
         snprintf(suggestion, sizeof(suggestion), " Did you mean '%s'?", best_match);
     }
 
@@ -433,7 +433,7 @@ bool fp_report_unknown_keyword(const FastParser *fastparser, PyObject *key) {
 
 basic_error:
     // Fallback logic for low-memory situations
-    if (best_match && best_dist < 3) {
+    if (best_match && best_dist < max_dist) {
         PyErr_Format(PyExc_TypeError,
                      "'%s' is an invalid keyword argument for %s(); did you mean '%s'?",
                      actual_name, pname, best_match);
@@ -446,6 +446,83 @@ cleanup:
     Py_XDECREF(newline);
     Py_XDECREF(joined);
     Py_XDECREF(valid_args_list);
+    return false;
+}
+
+[[gnu::noinline]]
+bool fp_report_conversion_error(const FastParser *fastparser, size_t index, PyObject *val) {
+    // 1. Capture the original "dry" error (e.g., OverflowError: "can't convert...")
+    PyObject *exc = PyErr_GetRaisedException();
+    if (FP_UNLIKELY(!exc)) {
+        return false;
+    }
+
+    const char *pname    = fastparser->parser_name ? fastparser->parser_name : "function";
+    const char *arg_name = fastparser->cold_specs[index].name;
+
+    // 2. Best-effort acquisition of Value Repr
+    PyObject *val_repr = PyObject_Repr(val);
+    if (FP_UNLIKELY(!val_repr)) {
+        PyErr_Clear(); // Clear OOM from repr attempt
+        val_repr = PyUnicode_FromString("<repr unavailable>");
+    }
+
+    // 3. Setup diagnostics components (OOM-vulnerable block)
+    PyObject *parts   = PyList_New(0);
+    PyObject *comma   = PyUnicode_FromString(", ");
+    PyObject *sig     = nullptr;
+    PyObject *exc_str = PyObject_Str(exc);
+    PyObject *new_msg = nullptr;
+
+    // If we failed basic allocations, jump to the safety fallback
+    if (FP_UNLIKELY(!parts || !comma || !exc_str)) {
+        goto oom_fallback;
+    }
+
+    // Build the fancy signature context
+    for (size_t i = 0; i < fastparser->count; i++) {
+        const char *name = fastparser->cold_specs[i].name;
+        const char *type = fastparser->cold_specs[i].type_name;
+        const char *fmt  = (i == index) ? "!!! %s: %s !!!" : "%s: %s";
+        PyObject *p      = PyUnicode_FromFormat(fmt, name, type ? type : "object");
+        if (p) {
+            PyList_Append(parts, p);
+            Py_DECREF(p);
+        }
+    }
+
+    sig = PyUnicode_Join(comma, parts);
+    if (FP_UNLIKELY(!sig)) {
+        goto oom_fallback;
+    }
+
+    // 4. Final assembly of the high-fidelity message
+    new_msg = PyUnicode_FromFormat("%s() argument '%s': %U\n"
+                                   "Received value: %U\n\n"
+                                   "Signature context:\n  %s(%U)",
+                                   pname, arg_name, exc_str, val_repr, pname, sig);
+
+    if (FP_LIKELY(new_msg)) {
+        PyErr_SetObject((PyObject *)Py_TYPE(exc), new_msg);
+        Py_DECREF(exc); // Handled by SetObject creating a new instance
+    } else {
+        goto oom_fallback;
+    }
+
+    goto cleanup;
+
+oom_fallback:
+    // Safety Valve: If any allocation failed, re-raise the original exception.
+    // This ensures the user still sees the dry error rather than an OOM error.
+    PyErr_SetRaisedException(exc);
+
+cleanup:
+    Py_XDECREF(val_repr);
+    Py_XDECREF(parts);
+    Py_XDECREF(comma);
+    Py_XDECREF(sig);
+    Py_XDECREF(exc_str);
+    Py_XDECREF(new_msg);
     return false;
 }
 
