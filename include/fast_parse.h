@@ -32,10 +32,10 @@ static constexpr int FP_EMPTY_SLOT = 0xFFFF;
 /** --- 1. TYPES & STRUCTS --- **/
 
 typedef struct {
-    PyObject *interned;                  // For keyword matching
-    PyTypeObject *type_guard;            // For type checking
-    bool (*convert)(PyObject *, void *); // The workhorse
-} FastArgSpecHot;                        // 24 bytes
+    PyObject *interned;                                           // For keyword matching
+    PyTypeObject *type_guard;                                     // For type checking
+    bool(__attribute__((regcall)) * convert)(PyObject *, void *); // The workhorse
+} FastArgSpecHot;                                                 // 24 bytes
 
 typedef struct {
     const char *name;
@@ -44,17 +44,17 @@ typedef struct {
 
 typedef struct FastParser FastParser;
 
-typedef bool (*FastParseFunc)(PyObject *const *FP_RESTRICT args, Py_ssize_t nargs,
-                              PyObject *FP_RESTRICT kwnames,
-                              const FastParser *FP_RESTRICT fastparser,
-                              void *FP_RESTRICT *FP_RESTRICT targets);
+typedef bool(__attribute__((regcall)) *
+             FastParseFunc)(PyObject *const *FP_RESTRICT args, Py_ssize_t nargs,
+                            PyObject *FP_RESTRICT kwnames, const FastParser *FP_RESTRICT fastparser,
+                            void *FP_RESTRICT *FP_RESTRICT targets);
 
 static constexpr auto alignment_size = 64;
 typedef struct {
     const char *name;
     const char *type_name;
     PyTypeObject *type_guard;
-    bool (*convert)(PyObject *, void *);
+    bool(__attribute__((regcall)) * convert)(PyObject *, void *);
     bool required;
 } FastArgDef;
 
@@ -75,23 +75,22 @@ static_assert(sizeof(struct FastParser) == (size_t)alignment_size * 2);
 static_assert(alignof(struct FastParser) == alignment_size);
 
 // Forward declaration of the generic fallback
-[[nodiscard]] static inline bool fp_parse_vector(PyObject *const *FP_RESTRICT args,
-                                                 Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,
-                                                 const FastParser *FP_RESTRICT fastparser,
-                                                 void *FP_RESTRICT *FP_RESTRICT targets);
+[[nodiscard]] [[gnu::regcall]] static inline bool
+fp_parse_vector(PyObject *const *FP_RESTRICT args, Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,
+                const FastParser *FP_RESTRICT fastparser, void *FP_RESTRICT *FP_RESTRICT targets);
 
 /** --- 2. EXTERN DECLARATIONS --- **/
-[[gnu::noinline]]
+[[gnu::noinline, nodiscard]]
 extern bool fp_report_type_error(const FastParser *fastparser, size_t index, PyObject *val);
-[[gnu::noinline]]
+[[gnu::noinline, nodiscard]]
 extern bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask);
-[[gnu::noinline]]
+[[gnu::noinline, nodiscard]]
 extern bool fp_report_multiple(const FastParser *fastparser, size_t index);
-[[gnu::noinline]]
+[[gnu::noinline, nodiscard]]
 extern bool fp_report_too_many(const FastParser *fastparser, Py_ssize_t nargs);
-[[gnu::noinline]]
+[[gnu::noinline, nodiscard]]
 extern bool fp_report_unknown_keyword(const FastParser *fastparser, PyObject *key);
-[[gnu::noinline]]
+[[gnu::noinline, nodiscard]]
 extern bool fp_report_conversion_error(const FastParser *fastparser, size_t index, PyObject *val);
 extern void fp_init_impl(FastParser *fastparser, const FastArgDef *defs, size_t count);
 extern void fp_deinit(FastParser *fastparser);
@@ -112,32 +111,36 @@ enum FastParseIndex : uint8_t {
     FP_IDX_7,
     FP_IDX_8
 };
-[[gnu::always_inline]]
-static inline bool fp_dispatch_conv(bool (*conv)(PyObject *, void *), PyObject *obj, void *target);
+[[gnu::always_inline, gnu::regcall]]
+static inline bool fp_dispatch_conv(bool(__attribute__((regcall)) * conv)(PyObject *, void *),
+                                    PyObject *obj, void *target);
 
-[[nodiscard, gnu::always_inline]]
-static inline bool fp_spec_check_and_conv(const FastParser *FP_RESTRICT fastparser, size_t idx,
-                                          PyObject *val, void *target) {
-    const FastArgSpecHot *spec = &fastparser->hot_specs[idx];
-
+[[nodiscard, gnu::always_inline, gnu::regcall]]
+static inline bool fp_spec_check_and_conv(const FastArgSpecHot *FP_RESTRICT spec, size_t idx,
+                                          PyObject *val, void *target,
+                                          const FastParser *FP_RESTRICT fastparser) {
+    // 1. Type Guard (Combined pointer + inheritance check)
     if (spec->type_guard) {
-        if (FP_UNLIKELY(!Py_IS_TYPE(val, spec->type_guard) &&
-                        !PyObject_TypeCheck(val, spec->type_guard))) {
-            return fp_report_type_error(fastparser, idx, val);
+        if (FP_LIKELY(Py_TYPE(val) != spec->type_guard)) {
+            if (FP_UNLIKELY(!PyObject_TypeCheck(val, spec->type_guard))) {
+                return fp_report_type_error(fastparser, idx, val);
+            }
         }
     }
 
-    // Use the dispatcher to allow inlining of common types
+    // 2. Conversion via Static Dispatcher
     return fp_dispatch_conv(spec->convert, val, target);
 }
 
 // Individual conversion call using the Enum and the safety helper
 #define FP_CALL_CONV(n)                                                                            \
-    fp_spec_check_and_conv(fastparser, FP_IDX_##n, args[FP_IDX_##n], targets[FP_IDX_##n])
+    fp_spec_check_and_conv(&fastparser->hot_specs[FP_IDX_##n], FP_IDX_##n, args[FP_IDX_##n],       \
+                           targets[FP_IDX_##n], fastparser)
 
 // Stub Function Boilerplate (unchanged, but the logic inside FP_CALL_CONV is now smarter)
 #define FP_GEN_STUB(N, ...)                                                                        \
-    [[nodiscard]] static inline bool fp_speculate_p##N##_naked(                                    \
+    [[gnu::always_inline, gnu::regcall]] [[nodiscard]] static inline bool                          \
+    fp_speculate_p##N##_naked(                                                                     \
         PyObject *const *FP_RESTRICT args, Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,        \
         const FastParser *FP_RESTRICT fastparser, void *FP_RESTRICT *FP_RESTRICT targets) {        \
         if (FP_LIKELY(nargs == N && kwnames == nullptr)) {                                         \
@@ -147,10 +150,9 @@ static inline bool fp_spec_check_and_conv(const FastParser *FP_RESTRICT fastpars
     }
 
 // 0 Args (Special case)
-[[nodiscard]] static inline bool fp_speculate_p0(PyObject *const *FP_RESTRICT args,
-                                                 Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,
-                                                 const FastParser *FP_RESTRICT fastparser,
-                                                 void *FP_RESTRICT *FP_RESTRICT targets) {
+[[nodiscard, gnu::regcall]] static inline bool
+fp_speculate_p0(PyObject *const *FP_RESTRICT args, Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,
+                const FastParser *FP_RESTRICT fastparser, void *FP_RESTRICT *FP_RESTRICT targets) {
     if (FP_LIKELY(nargs == 0 && kwnames == nullptr)) {
         return true;
     }
@@ -180,7 +182,8 @@ FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_
 
 /** --- 3. CONVERTER DISPATCH --- **/
 
-[[nodiscard]] static inline bool fp_conv_float(PyObject *obj, void *target) {
+[[nodiscard, gnu::always_inline, gnu::regcall]] static inline bool fp_conv_float(PyObject *obj,
+                                                                                 void *target) {
     // HOT PATH: Exact float match (Pointer comparison)
     if (PyFloat_CheckExact(obj)) {
         *(float *)target = (float)((PyFloatObject *)obj)->ob_fval;
@@ -196,7 +199,8 @@ FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_
     return true;
 }
 
-[[nodiscard]] static inline bool fp_conv_double(PyObject *obj, void *target) {
+[[nodiscard, gnu::always_inline, gnu::regcall]] static inline bool fp_conv_double(PyObject *obj,
+                                                                                  void *target) {
     // HOT PATH: Exact float match
     // Bypasses the overhead of PyFloat_AsDouble (magic method checks, int conversion logic)
     if (PyFloat_CheckExact(obj)) {
@@ -218,7 +222,8 @@ FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_
     return true;
 }
 
-[[nodiscard]] static inline bool fp_conv_int(PyObject *obj, void *target) {
+[[nodiscard, gnu::always_inline, gnu::regcall]] static inline bool fp_conv_int(PyObject *obj,
+                                                                               void *target) {
     // 1. Singletons (Pointer identity is the fastest possible check)
     if (obj == Py_True) {
         *(int *)target = 1;
@@ -253,7 +258,8 @@ FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_
     return true;
 }
 
-[[nodiscard]] static inline bool fp_conv_u32(PyObject *obj, void *target) {
+[[nodiscard, gnu::always_inline, gnu::regcall]] static inline bool fp_conv_u32(PyObject *obj,
+                                                                               void *target) {
     if (obj == Py_True) {
         *(uint32_t *)target = 1;
         return true;
@@ -282,7 +288,8 @@ FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_
     return true;
 }
 
-[[nodiscard]] static inline bool fp_conv_u64(PyObject *obj, void *target) {
+[[nodiscard, gnu::always_inline, gnu::regcall]] static inline bool fp_conv_u64(PyObject *obj,
+                                                                               void *target) {
     if (obj == Py_True) {
         *(uint64_t *)target = 1;
         return true;
@@ -312,7 +319,8 @@ FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_
     return true;
 }
 
-[[nodiscard]] static inline bool fp_conv_bool(PyObject *obj, void *target) {
+[[nodiscard, gnu::always_inline, gnu::regcall]] static inline bool fp_conv_bool(PyObject *obj,
+                                                                                void *target) {
     // Exact pointer check for the singletons
     if (obj == Py_True) {
         *(bool *)target = true;
@@ -332,12 +340,14 @@ FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_
     return true;
 }
 
-[[nodiscard]] static inline bool fp_conv_pyobj(PyObject *obj, void *target) {
+[[nodiscard, gnu::always_inline, gnu::regcall]] static inline bool fp_conv_pyobj(PyObject *obj,
+                                                                                 void *target) {
     *(PyObject **)target = obj;
     return true;
 }
 
-[[nodiscard]] static inline bool fp_conv_str(PyObject *obj, void *target) {
+[[nodiscard, gnu::always_inline, gnu::regcall]] static inline bool fp_conv_str(PyObject *obj,
+                                                                               void *target) {
     if (FP_UNLIKELY(!PyUnicode_Check(obj))) {
         PyErr_Format(PyExc_TypeError, "expected str, got %s", Py_TYPE(obj)->tp_name);
         return false;
@@ -350,7 +360,8 @@ FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_
     return true;
 }
 
-[[nodiscard]] static inline bool fp_conv_ssize(PyObject *obj, void *target) {
+[[nodiscard, gnu::always_inline, gnu::regcall]] static inline bool fp_conv_ssize(PyObject *obj,
+                                                                                 void *target) {
     // HOT PATH: Exact integer match
     if (FP_LIKELY(PyLong_CheckExact(obj))) {
         Py_ssize_t val = PyLong_AsSsize_t(obj);
@@ -375,24 +386,28 @@ FP_GEN_STUB(8, FP_CALL_CONV(0) && FP_CALL_CONV(1) && FP_CALL_CONV(2) && FP_CALL_
     return true;
 }
 
-[[gnu::always_inline]]
-static inline bool fp_dispatch_conv(bool (*conv)(PyObject *, void *), PyObject *obj, void *target) {
+[[gnu::always_inline, gnu::regcall, nodiscard]]
+static inline bool fp_dispatch_conv(bool(__attribute__((regcall)) * conv)(PyObject *, void *),
+                                    PyObject *obj, void *target) {
     // These comparisons are just address checks (extremely fast)
     // If a match is found, the compiler inlines the specific converter.
+    if (conv == fp_conv_float) {
+        return fp_conv_float(obj, target);
+    }
     if (conv == fp_conv_int) {
         return fp_conv_int(obj, target);
     }
-    if (conv == fp_conv_float) {
-        return fp_conv_float(obj, target);
+    if (conv == fp_conv_u64) {
+        return fp_conv_u64(obj, target);
+    }
+    if (conv == fp_conv_ssize) {
+        return fp_conv_ssize(obj, target);
     }
     if (conv == fp_conv_bool) {
         return fp_conv_bool(obj, target);
     }
     if (conv == fp_conv_pyobj) {
         return fp_conv_pyobj(obj, target);
-    }
-    if (conv == fp_conv_ssize) {
-        return fp_conv_ssize(obj, target);
     }
 
     // Fallback for custom or less common converters
@@ -469,15 +484,23 @@ extern void ERROR_FastParse_Unsupported_Type(void);
     }
 
 /** --- 4. THE HOT PATH --- **/
-[[gnu::always_inline, gnu::const]]
+/**
+ * Optimized Pointer Mixer for x86_64 (Intel/AMD)
+ * Uses a 64-bit shift-multiply-shift to maximize entropy in the middle bits,
+ * ensuring keywords map to unique slots in the FastParser table.
+ */
+[[gnu::always_inline, gnu::const, gnu::regcall, nodiscard]]
 static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
-    auto val = (uintptr_t)ptr;
-    // Golden ratio multiplier spreads pointer bits effectively
-    constexpr auto gratio     = 11400714819323198485ULL;
-    constexpr auto shift_bits = 32ULL;
-    return ((val * gratio) >> shift_bits) & mask;
+    uintptr_t x = (uintptr_t)ptr;
+    // Remove the 3-4 predictable low bits (alignment)
+    x >>= 4;
+    // Multiplier from PCG / MurmurHash3 finalizer - extremely fast on 14th gen Intel
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    return (size_t)x & mask;
 }
-[[gnu::always_inline]]
+[[gnu::always_inline, gnu::regcall, nodiscard]]
 static inline bool fp_check_type_guard(const FastArgSpecHot *FP_RESTRICT spec,
                                        PyObject *FP_RESTRICT val) {
     PyTypeObject *guard = spec->type_guard;
@@ -488,77 +511,57 @@ static inline bool fp_check_type_guard(const FastArgSpecHot *FP_RESTRICT spec,
     }
 
     // HOT PATH: Exact pointer match (The most common case in Python)
-    if (Py_IS_TYPE(val, guard)) {
+    if (FP_LIKELY(Py_IS_TYPE(val, guard))) {
         return true;
     }
 
     // COLD PATH: Inheritance check (Subclasses)
     return PyObject_TypeCheck(val, guard);
 }
-[[gnu::always_inline]]
+[[gnu::noinline, gnu::cold]]
+extern bool fp_warn_uninterned_slow(PyObject *key, const char *pname);
+
+/**
+ * COLD FALLBACK: fp_cmp_slow
+ * Separated to keep the instruction cache lean for interned keys.
+ */
+[[gnu::noinline, gnu::cold]]
+extern size_t fp_cmp_slow(PyObject *key, const FastParser *fastparse);
+
+[[gnu::always_inline, gnu::regcall, nodiscard]]
 static inline size_t fp_find_keyword_index(PyObject *FP_RESTRICT key,
                                            const FastParser *FP_RESTRICT fastparse) {
-    const uint16_t *ltable = fastparse->lookup_table;
-    size_t found_idx       = FP_EMPTY_SLOT;
+    const size_t count          = fastparse->count;
+    const FastArgSpecHot *specs = fastparse->hot_specs;
 
-    // 1. Try Hash Table if it exists
-    if (FP_LIKELY(ltable != nullptr)) {
-        size_t hash = fp_hash_ptr(key, fastparse->table_mask);
-#pragma unroll 4
-        while (ltable[hash] != FP_EMPTY_SLOT) {
-            size_t candidate = ltable[hash];
-            if (fastparse->hot_specs[candidate].interned == key) {
-                return candidate;
-            }
-            // Performance hit: matching string content but different pointers
-            if (FP_UNLIKELY(PyUnicode_Compare(key, fastparse->hot_specs[candidate].interned) ==
-                            0)) {
-                found_idx = candidate;
-                goto trigger_warning;
-            }
-            hash = (hash + 1) & fastparse->table_mask;
-        }
-    }
-
-    // 2. Fallback: Linear search (Crucial for small arg counts < 8)
-#pragma unroll 4
-    for (size_t j = 0; j < fastparse->count; ++j) {
-        if (fastparse->hot_specs[j].interned == key) {
+    // 1. Optimized Linear Scan (Pointer Identity Only)
+    // This fits in the CPU's loop buffer and branch predictor.
+    for (size_t j = 0; j < count; ++j) {
+        if (specs[j].interned == key) {
             return j;
         }
-        if (FP_UNLIKELY(PyUnicode_Compare(key, fastparse->hot_specs[j].interned) == 0)) {
-            found_idx = j;
-            goto trigger_warning;
+    }
+
+    // 2. Hash Table (Only for large argument counts)
+    const uint16_t *ltable = fastparse->lookup_table;
+    if (FP_UNLIKELY(ltable != nullptr)) {
+        size_t hash = fp_hash_ptr(key, fastparse->table_mask);
+        for (int i = 0; i < 4; i++) {
+            size_t slot = ltable[(hash + i) & fastparse->table_mask];
+            if (slot == FP_EMPTY_SLOT) {
+                break;
+            }
+            if (specs[slot].interned == key) {
+                return slot;
+            }
         }
     }
 
-    return FP_EMPTY_SLOT;
+    // 3. The "Content" check is now a function call (keeps this loop fast)
+    return fp_cmp_slow(key, fastparse);
+}
 
-trigger_warning: {
-    // I don't think I want to make this an atomic operation considering that parsing is almost
-    // always single-threaded. Avoids header bloat. If it's a race somehow, no big deal.
-    if (FP_UNLIKELY(fastparse->warned == false)) {
-        // UB. It's just a bool...
-        bool *warn_ptr = (bool *)&fastparse->warned;
-        *warn_ptr      = true;
-        // If PyErr_WarnFormat returns < 0, a Warning was upgraded to an Error.
-        // We return FP_EMPTY_SLOT to allow the caller to abort and propagate the error.
-        if (PyErr_WarnFormat(PyExc_RuntimeWarning, 1,
-                             "Priority Alert: Specific keyword '%U' in parser implementation '%s' "
-                             "is not interned. \n"
-                             "This condition mandates a slow string comparison and degrades "
-                             "performance significantly. \n"
-                             "Sanitize the environment by interning strings manually with "
-                             "sys.intern() immediately.",
-                             key,
-                             fastparse->parser_name ? fastparse->parser_name : "unknown") < 0) {
-            return FP_EMPTY_SLOT;
-        }
-    }
-}
-    return found_idx;
-}
-[[gnu::always_inline]]
+[[gnu::always_inline, gnu::regcall]]
 static inline bool fp_process_pos(const FastParser *FP_RESTRICT fastparse,
                                   PyObject *const *FP_RESTRICT args, Py_ssize_t nargs,
                                   void *FP_RESTRICT *FP_RESTRICT targets) {
@@ -581,7 +584,7 @@ static inline bool fp_process_pos(const FastParser *FP_RESTRICT fastparse,
     }
     return true;
 }
-[[gnu::always_inline]]
+[[gnu::always_inline, gnu::regcall, nodiscard]]
 static inline bool fp_process_kw(const FastParser *FP_RESTRICT fastparse,
                                  PyObject *const *FP_RESTRICT args, Py_ssize_t nargs,
                                  PyObject *FP_RESTRICT kwnames, uint64_t *FP_RESTRICT mask,
@@ -619,7 +622,7 @@ static inline bool fp_process_kw(const FastParser *FP_RESTRICT fastparse,
     return true;
 }
 
-[[gnu::always_inline, gnu::const]]
+[[gnu::always_inline, gnu::const, gnu::regcall, nodiscard]]
 static inline uint64_t fp_make_mask(size_t n) {
     if (n == 0) {
         return 0;
@@ -632,7 +635,7 @@ static inline uint64_t fp_make_mask(size_t n) {
 }
 
 // unadulterated speed!!!
-[[nodiscard, gnu::always_inline, gnu::hot, gnu::no_stack_protector,
+[[nodiscard, gnu::always_inline, gnu::hot, gnu::no_stack_protector, gnu::regcall,
   gnu::nonnull(1, 4, 5)]] static inline bool
 fp_parse_vector(PyObject *const *FP_RESTRICT args, Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,
                 const FastParser *FP_RESTRICT fastparse, void *FP_RESTRICT *FP_RESTRICT targets) {

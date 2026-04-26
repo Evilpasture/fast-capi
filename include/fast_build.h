@@ -97,33 +97,37 @@ extern PyObject *FB_UNSUPPORTED_TYPE_PASSED_TO_FASTBUILD(void);
 
 /* --- 3. THE CONTAINER PACKERS --- */
 
-FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_pack_tuple(size_t n, PyObject **arr) {
+FB_NODISCARD [[gnu::always_inline]]
+static inline PyObject *fb_pack_tuple(size_t n, PyObject **arr) {
     if (FB_UNLIKELY(n == 0)) {
         return PyTuple_New(0);
-    }
-#pragma unroll 4
-    for (size_t i = 0; i < n; i++) {
-        if (FB_UNLIKELY(!arr[i])) {
-            goto error;
-        }
     }
 
     PyObject *t = PyTuple_New((Py_ssize_t)n);
     if (FB_UNLIKELY(!t)) {
-        goto error;
+        for (size_t i = 0; i < n; i++) {
+            Py_XDECREF(arr[i]);
+        }
+        return nullptr;
     }
-#pragma unroll 4
+
     for (size_t i = 0; i < n; i++) {
-        PyTuple_SET_ITEM(t, i, arr[i]); // Steals reference
+        PyObject *obj = arr[i];
+
+        if (FB_UNLIKELY(!obj)) {
+            // Builder failure cleanup:
+            Py_DECREF(t); 
+
+            for (size_t j = i + 1; j < n; j++) {
+                Py_XDECREF(arr[j]);
+            }
+            return nullptr;
+        }
+
+        // Steals the reference from the builder array
+        PyTuple_SET_ITEM(t, i, obj);
     }
     return t;
-
-error:
-#pragma unroll 2
-    for (size_t i = 0; i < n; i++) {
-        Py_XDECREF(arr[i]);
-    }
-    return nullptr;
 }
 
 FB_NODISCARD FB_FORCE_INLINE static PyObject *fb_pack_list(size_t n, PyObject **arr) {

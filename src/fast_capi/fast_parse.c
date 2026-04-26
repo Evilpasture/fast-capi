@@ -9,7 +9,49 @@ static const FastParseFunc MONO_STUBS[] = {
 static constexpr size_t STUBS_SIZE = 9;
 static_assert(sizeof(MONO_STUBS) / sizeof(FastParseFunc) == STUBS_SIZE,
               "MONO_STUBS table must contain exactly 9 stubs (0-8 args)");
-[[gnu::noinline]]
+
+/**
+ * COLD PATH: fp_warn_uninterned_slow
+ *
+ * This function handles the expensive string formatting and warning emission
+ * for non-interned keywords. By marking it 'noinline' and 'cold', we ensure
+ * that Clang keeps this code away from the high-speed 'fp_find_keyword_index'
+ * instruction cache zone.
+ */
+[[gnu::noinline, gnu::cold, nodiscard]]
+bool fp_warn_uninterned_slow(PyObject *key, const char *pname) {
+    int result = PyErr_WarnFormat(PyExc_RuntimeWarning, 1,
+                                  "Performance Alert: Keyword '%U' in parser '%s' is not interned.\n"
+                                  "This forces a slow string comparison. To resolve this, use "
+                                  "sys.intern() on keywords passed from Python gameplay logic.",
+                                  key, pname ? pname : "unknown");
+    return result >= 0;
+}
+
+[[gnu::noinline, gnu::cold, nodiscard]]
+size_t fp_cmp_slow(PyObject *key, const FastParser *fastparse) {
+    const size_t count = fastparse->count;
+    const FastArgSpecHot *specs = fastparse->hot_specs;
+
+    for (size_t j = 0; j < count; ++j) {
+        if (PyUnicode_Compare(key, specs[j].interned) == 0) {
+            if (!fastparse->warned) {
+                // Cast away constness to update the one-time warning flag
+                ((FastParser *)fastparse)->warned = true;
+                
+                // If this returns false, a Python error is pending.
+                // We return FP_EMPTY_SLOT so the parser loop terminates and returns false.
+                if (!fp_warn_uninterned_slow(key, fastparse->parser_name)) {
+                    return FP_EMPTY_SLOT;
+                }
+            }
+            return j;
+        }
+    }
+    return FP_EMPTY_SLOT;
+}
+
+[[gnu::noinline, gnu::cold, nodiscard]]
 bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask) {
     const char *pname = fastparser->parser_name ? fastparser->parser_name : "function";
 
@@ -87,7 +129,7 @@ bool fp_report_missing(const FastParser *fastparser, uint64_t provided_mask) {
 
     return false;
 }
-[[gnu::noinline]]
+[[gnu::noinline, nodiscard]]
 bool fp_report_type_error(const FastParser *fastparser, size_t index, PyObject *val) {
     const FastArgSpecCold *cold_spec = &fastparser->cold_specs[index];
     const FastArgSpecHot *hot_spec   = &fastparser->hot_specs[index];
@@ -178,7 +220,7 @@ cleanup:
     Py_XDECREF(val_repr);
     return false;
 }
-[[gnu::noinline]]
+[[gnu::noinline, nodiscard]]
 bool fp_report_multiple(const FastParser *fastparser, size_t index) {
     const char *pname    = fastparser->parser_name ? fastparser->parser_name : "function";
     const char *arg_name = fastparser->cold_specs[index].name;
