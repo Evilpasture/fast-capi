@@ -68,7 +68,7 @@ struct FastParser {
     size_t table_mask;
     uint64_t required_mask;
     uint64_t type_guard_mask;
-    bool warned;
+    uint64_t warned_mask;
 };
 
 static_assert(sizeof(struct FastParser) == (size_t)alignment_size * 2);
@@ -516,10 +516,12 @@ static inline size_t fp_find_keyword_index(PyObject *FP_RESTRICT key,
     const FastArgSpecHot *specs = fastparse->hot_specs;
     const uint16_t *ltable      = fastparse->lookup_table;
 
-    // Large arg count: go straight to hash table (O(1))
     if (FP_LIKELY(ltable != nullptr)) {
         size_t hash = fp_hash_ptr(key, fastparse->table_mask);
-        for (int i = 0; i < 4; i++) {
+
+        // THE FIX: Probe until we hit an empty slot (table is 50% empty, so this is fast)
+        // We use table_mask as a safe upper bound to prevent infinite loops.
+        for (size_t i = 0; i <= fastparse->table_mask; i++) {
             size_t slot = ltable[(hash + i) & fastparse->table_mask];
             if (slot == FP_EMPTY_SLOT) {
                 break;
@@ -529,7 +531,6 @@ static inline size_t fp_find_keyword_index(PyObject *FP_RESTRICT key,
             }
         }
     } else {
-        // Small arg count (<=8): pointer identity linear scan, fits in loop buffer
         const size_t count = fastparse->count;
         for (size_t j = 0; j < count; ++j) {
             if (specs[j].interned == key) {
@@ -538,7 +539,6 @@ static inline size_t fp_find_keyword_index(PyObject *FP_RESTRICT key,
         }
     }
 
-    // Neither matched by pointer: fall back to content comparison
     return fp_cmp_slow(key, fastparse);
 }
 

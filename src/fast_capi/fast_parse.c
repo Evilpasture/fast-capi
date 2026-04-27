@@ -20,12 +20,11 @@ static_assert(sizeof(MONO_STUBS) / sizeof(FastParseFunc) == STUBS_SIZE,
  */
 [[gnu::noinline, gnu::cold, nodiscard]]
 bool fp_warn_uninterned_slow(PyObject *key, const char *pname) {
-    int result =
-        PyErr_WarnFormat(PyExc_RuntimeWarning, 1,
-                         "Performance Alert: Keyword '%U' in parser '%s' is not interned.\n"
-                         "This forces a slow string comparison. To resolve this, use "
-                         "sys.intern() on keywords passed from Python gameplay logic.",
-                         key, pname ? pname : "unknown");
+    int result = PyErr_WarnFormat(PyExc_RuntimeWarning, 1,
+                                  "Priority Alert: Keyword '%U' in parser '%s' is not interned.\n"
+                                  "This forces a slow string comparison. To resolve this, use "
+                                  "sys.intern() on keywords passed from Python logic.",
+                                  key, pname ? pname : "unknown");
     return result >= 0;
 }
 
@@ -35,13 +34,15 @@ size_t fp_cmp_slow(PyObject *key, const FastParser *fastparse) {
     const FastArgSpecHot *specs = fastparse->hot_specs;
 
     for (size_t j = 0; j < count; ++j) {
-        if (PyUnicode_Compare(key, specs[j].interned) == 0) {
-            if (!fastparse->warned) {
-                // Cast away constness to update the one-time warning flag
-                ((FastParser *)fastparse)->warned = true;
+        // 1. Is it the exact same pointer that just slipped past the hash table?
+        if (key == specs[j].interned) {
+            return j; // Return silently, no warning needed!
+        }
 
-                // If this returns false, a Python error is pending.
-                // We return FP_EMPTY_SLOT so the parser loop terminates and returns false.
+        // 2. Slow string content comparison
+        if (PyUnicode_Compare(key, specs[j].interned) == 0) {
+            if ((fastparse->warned_mask & (1ULL << j)) == 0) {
+                ((FastParser *)fastparse)->warned_mask |= (1ULL << j);
                 if (!fp_warn_uninterned_slow(key, fastparse->parser_name)) {
                     return FP_EMPTY_SLOT;
                 }
@@ -578,7 +579,7 @@ void fp_init_impl(FastParser *fastparser, const FastArgDef *defs, size_t count) 
     fastparser->required_mask   = 0;
     fastparser->type_guard_mask = 0;
     fastparser->lookup_table    = nullptr;
-    fastparser->warned          = false;
+    fastparser->warned_mask     = 0;
 
     // 1. Allocate Hot and Cold arrays (Data-Oriented Split)
     // Using PyMem_RawMalloc to avoid GIL dependencies during allocation
