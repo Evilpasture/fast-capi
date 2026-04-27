@@ -521,20 +521,11 @@ extern size_t fp_cmp_slow(PyObject *key, const FastParser *fastparse);
 [[gnu::always_inline, nodiscard]]
 static inline size_t fp_find_keyword_index(PyObject *FP_RESTRICT key,
                                            const FastParser *FP_RESTRICT fastparse) {
-    const size_t count          = fastparse->count;
     const FastArgSpecHot *specs = fastparse->hot_specs;
+    const uint16_t *ltable      = fastparse->lookup_table;
 
-    // 1. Optimized Linear Scan (Pointer Identity Only)
-    // This fits in the CPU's loop buffer and branch predictor.
-    for (size_t j = 0; j < count; ++j) {
-        if (specs[j].interned == key) {
-            return j;
-        }
-    }
-
-    // 2. Hash Table (Only for large argument counts)
-    const uint16_t *ltable = fastparse->lookup_table;
-    if (FP_UNLIKELY(ltable != nullptr)) {
+    // Large arg count: go straight to hash table (O(1))
+    if (FP_LIKELY(ltable != nullptr)) {
         size_t hash = fp_hash_ptr(key, fastparse->table_mask);
         for (int i = 0; i < 4; i++) {
             size_t slot = ltable[(hash + i) & fastparse->table_mask];
@@ -545,9 +536,17 @@ static inline size_t fp_find_keyword_index(PyObject *FP_RESTRICT key,
                 return slot;
             }
         }
+    } else {
+        // Small arg count (<=8): pointer identity linear scan, fits in loop buffer
+        const size_t count = fastparse->count;
+        for (size_t j = 0; j < count; ++j) {
+            if (specs[j].interned == key) {
+                return j;
+            }
+        }
     }
 
-    // 3. The "Content" check is now a function call (keeps this loop fast)
+    // Neither matched by pointer: fall back to content comparison
     return fp_cmp_slow(key, fastparse);
 }
 

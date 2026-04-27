@@ -20,17 +20,18 @@ static_assert(sizeof(MONO_STUBS) / sizeof(FastParseFunc) == STUBS_SIZE,
  */
 [[gnu::noinline, gnu::cold, nodiscard]]
 bool fp_warn_uninterned_slow(PyObject *key, const char *pname) {
-    int result = PyErr_WarnFormat(PyExc_RuntimeWarning, 1,
-                                  "Performance Alert: Keyword '%U' in parser '%s' is not interned.\n"
-                                  "This forces a slow string comparison. To resolve this, use "
-                                  "sys.intern() on keywords passed from Python gameplay logic.",
-                                  key, pname ? pname : "unknown");
+    int result =
+        PyErr_WarnFormat(PyExc_RuntimeWarning, 1,
+                         "Performance Alert: Keyword '%U' in parser '%s' is not interned.\n"
+                         "This forces a slow string comparison. To resolve this, use "
+                         "sys.intern() on keywords passed from Python gameplay logic.",
+                         key, pname ? pname : "unknown");
     return result >= 0;
 }
 
 [[gnu::noinline, gnu::cold, nodiscard]]
 size_t fp_cmp_slow(PyObject *key, const FastParser *fastparse) {
-    const size_t count = fastparse->count;
+    const size_t count          = fastparse->count;
     const FastArgSpecHot *specs = fastparse->hot_specs;
 
     for (size_t j = 0; j < count; ++j) {
@@ -38,7 +39,7 @@ size_t fp_cmp_slow(PyObject *key, const FastParser *fastparse) {
             if (!fastparse->warned) {
                 // Cast away constness to update the one-time warning flag
                 ((FastParser *)fastparse)->warned = true;
-                
+
                 // If this returns false, a Python error is pending.
                 // We return FP_EMPTY_SLOT so the parser loop terminates and returns false.
                 if (!fp_warn_uninterned_slow(key, fastparse->parser_name)) {
@@ -645,6 +646,19 @@ void fp_init_impl(FastParser *fastparser, const FastArgDef *defs, size_t count) 
             fastparser->hot_path = MONO_STUBS[count];
         }
     }
+#if defined(CULVERIN_DEBUG)
+    if (fastparser->hot_path == fp_parse_vector) {
+        PySys_WriteStderr("FastParse [%s]: hot_path fell back to fp_parse_vector "
+                          "(count=%zu, required_mask=0x%016llx, all_required=0x%016llx)\n",
+                          fastparser->parser_name ? fastparser->parser_name : "?",
+                          fastparser->count, (unsigned long long)fastparser->required_mask,
+                          (unsigned long long)all_required);
+    } else {
+        PySys_WriteStderr("FastParse [%s]: hot_path -> MONO_STUB[%zu]\n",
+                          fastparser->parser_name ? fastparser->parser_name : "?",
+                          fastparser->count);
+    }
+#endif
 }
 
 void fp_deinit(FastParser *fastparser) {
@@ -739,7 +753,7 @@ static inline bool fp_process_kw_legacy(const FastParser *FP_RESTRICT fastparse,
 
 /** --- ORCHESTRATOR --- **/
 
-[[nodiscard, gnu::always_inline]]
+[[nodiscard, gnu::hot, gnu::nonnull(4, 5), gnu::no_stack_protector, gnu::flatten, gnu::noinline]]
 bool fp_parse_legacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
                      const FastParser *FP_RESTRICT fastparser,
                      void *FP_RESTRICT *FP_RESTRICT targets) {
