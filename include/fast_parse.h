@@ -474,21 +474,13 @@ extern void ERROR_FastParse_Unsupported_Type(void);
     }
 
 /** --- 4. THE HOT PATH --- **/
-/**
- * Optimized Pointer Mixer for x86_64 (Intel/AMD)
- * Uses a 64-bit shift-multiply-shift to maximize entropy in the middle bits,
- * ensuring keywords map to unique slots in the FastParser table.
- */
-[[gnu::always_inline, gnu::const, nodiscard]]
+[[gnu::always_inline, gnu::const, maybe_unused, nodiscard]]
 static inline size_t fp_hash_ptr(PyObject *ptr, size_t mask) {
-    uintptr_t x = (uintptr_t)ptr;
-    // Remove the 3-4 predictable low bits (alignment)
-    x >>= 4;
-    // Multiplier from PCG / MurmurHash3 finalizer - extremely fast on 14th gen Intel
-    x ^= x >> 33;
-    x *= 0xff51afd7ed558ccdULL;
-    x ^= x >> 33;
-    return (size_t)x & mask;
+    auto val = (uintptr_t)ptr;
+    // Golden ratio multiplier spreads pointer bits effectively
+    constexpr auto gratio     = 11400714819323198485ULL;
+    constexpr auto shift_bits = 32ULL;
+    return ((val * gratio) >> shift_bits) & mask;
 }
 [[gnu::always_inline, nodiscard]]
 static inline bool fp_check_type_guard(const FastArgSpecHot *FP_RESTRICT spec,
