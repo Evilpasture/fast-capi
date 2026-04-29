@@ -137,7 +137,20 @@ static inline bool fp_spec_check_and_conv(const FastArgSpecHot *FP_RESTRICT spec
     fp_spec_check_and_conv(&fastparser->hot_specs[FP_IDX_##n], FP_IDX_##n, args[FP_IDX_##n],       \
                            targets[FP_IDX_##n], fastparser)
 
-// Stub Function Boilerplate (unchanged, but the logic inside FP_CALL_CONV is now smarter)
+/**
+ * DIRECT CONVERSION CALL
+ * Bypasses type-guard inheritance checks and elides devirtualization branches.
+ * This is a raw indirect call through the function pointer stored in hot_specs.
+ * 
+ * Logic: 
+ * - No check for spec->type_guard.
+ * - No check for interned identity.
+ * - Direct call to .convert().
+ */
+#define FP_CALL_CONV_DIRECT(n)                                                                     \
+    fastparser->hot_specs[FP_IDX_##n].convert(args[FP_IDX_##n], targets[FP_IDX_##n])
+
+// Stub Function Boilerplate
 #define FP_GEN_STUB(N, ...)                                                                        \
     [[gnu::always_inline]] [[nodiscard]] static inline bool fp_speculate_p##N##_naked(             \
         PyObject *const *FP_RESTRICT args, Py_ssize_t nargs, PyObject *FP_RESTRICT kwnames,        \
@@ -145,7 +158,7 @@ static inline bool fp_spec_check_and_conv(const FastArgSpecHot *FP_RESTRICT spec
         if (FP_LIKELY(nargs == N && kwnames == nullptr)) {                                         \
             return (__VA_ARGS__);                                                                  \
         }                                                                                          \
-        return fp_parse_vector(args, nargs, kwnames, fastparser, targets);                         \
+        [[clang::noinline]] return fp_parse_vector(args, nargs, kwnames, fastparser, targets);                         \
     }
 
 // 0 Args (Special case)
@@ -156,7 +169,7 @@ static inline bool fp_spec_check_and_conv(const FastArgSpecHot *FP_RESTRICT spec
     if (FP_LIKELY(nargs == 0 && kwnames == nullptr)) {
         return true;
     }
-    return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
+    [[clang::noinline]] return fp_parse_vector(args, nargs, kwnames, fastparser, targets);
 }
 
 // Generate stubs 1 through 8
