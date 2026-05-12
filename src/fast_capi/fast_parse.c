@@ -29,7 +29,8 @@ bool fp_warn_uninterned_slow(PyObject *key, const char *pname) {
 }
 
 [[gnu::noinline, gnu::cold, nodiscard]]
-size_t fp_cmp_slow(PyObject *key, const FastParser *fastparse) {
+size_t fp_cmp_slow(PyObject key[static const restrict 1],
+                   const FastParser fastparse[static const restrict 1]) {
     const size_t count          = fastparse->count;
     const FastArgSpecHot *specs = fastparse->hot_specs;
 
@@ -691,8 +692,10 @@ void fp_deinit(FastParser *fastparser) {
 /** --- LEGACY HELPERS --- **/
 
 [[gnu::always_inline]]
-static inline bool fp_process_pos_legacy(const FastParser *FP_RESTRICT fastparse, PyObject *args,
-                                         Py_ssize_t nargs, void *FP_RESTRICT *FP_RESTRICT targets) {
+static inline bool
+fp_process_pos_legacy(const FastParser fastparse[static const restrict 1],
+                      PyObject args[static const restrict 1], Py_ssize_t nargs,
+                      const void *const FP_RESTRICT targets[static const restrict 1]) {
 #pragma unroll 2
     for (Py_ssize_t i = 0; i < nargs; ++i) {
         PyObject *val              = PyTuple_GET_ITEM(args, i);
@@ -713,9 +716,11 @@ static inline bool fp_process_pos_legacy(const FastParser *FP_RESTRICT fastparse
 }
 
 [[gnu::always_inline]]
-static inline bool fp_process_kw_legacy(const FastParser *FP_RESTRICT fastparse, PyObject *kwargs,
-                                        uint64_t *FP_RESTRICT mask,
-                                        void *FP_RESTRICT *FP_RESTRICT targets) {
+static inline bool
+fp_process_kw_legacy(const FastParser fastparse[static const restrict 1],
+                     PyObject kwargs[static const restrict 1],
+                     uint64_t mask[static const restrict 1],
+                     const void *const FP_RESTRICT targets[static const restrict 1]) {
     PyObject *key;
     PyObject *val;
     Py_ssize_t pos = 0;
@@ -755,9 +760,10 @@ static inline bool fp_process_kw_legacy(const FastParser *FP_RESTRICT fastparse,
 /** --- ORCHESTRATOR --- **/
 
 [[nodiscard, gnu::hot, gnu::nonnull(4, 5), gnu::no_stack_protector, gnu::flatten, gnu::noinline]]
-bool fp_parse_legacy(PyObject *args, PyObject *kwargs, [[maybe_unused]] PyObject *unused,
-                     const FastParser *FP_RESTRICT fastparser,
-                     void *FP_RESTRICT *FP_RESTRICT targets) {
+bool fp_parse_legacy(PyObject args[static const FP_RESTRICT 1], PyObject kwargs[const FP_RESTRICT],
+                     [[maybe_unused]] PyObject *unused,
+                     const FastParser fastparser[static const FP_RESTRICT 1],
+                     const void *const FP_RESTRICT targets[static const FP_RESTRICT 1]) {
 
     Py_ssize_t nargs = args ? PyTuple_GET_SIZE(args) : 0;
 
